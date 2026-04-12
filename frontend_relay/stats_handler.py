@@ -6,16 +6,16 @@
 这个文件是一个独立的专门处理交易数据统计请求。
 
 【数据流向】
-qd_server 收到前端 get_stats 指令
+qd_server 收到前端 get_stats 指令数据
         ↓
-转发给 StatsHandler.handle(ws, data, client_id)
+转发给 stats_handler.process_stats_command(data)
         ↓
 StatsHandler 自己：
     1. 解析时间范围
     2. 连接 MongoDB，查询 closed_positions 集合
     3. 按交易所分组 → 配对筛选（套利 vs 单边）
     4. 计算 15 个统计指标
-    5. 调用 ws.send_json() 把结果推给前端
+    5. 把结果交给 qd_server 推送给前端
 
 【依赖说明】
 - 只依赖环境变量 MONGODB_URI
@@ -354,3 +354,45 @@ class StatsHandler:
             'net_pnl': 0.0,
             'net_pnl_rate': 0.0,
         }
+
+
+# ==================== 统计指令处理入口 ====================
+
+def process_stats_command(data):
+    """
+    接收 qd_server 转发来的统计指令数据，开始干活
+    """
+    logger.info(f"📊 【数据统计处理器】收到统计指令数据")
+    logger.info(f"   指令内容: {data}")
+    
+    handler = StatsHandler()
+    asyncio.create_task(handler._execute_stats_task(data))
+
+
+async def _execute_stats_task(self, data):
+    """
+    执行统计任务：解析数据、查询数据库、计算指标、交给 qd_server
+    """
+    try:
+        # 解析参数
+        params = data.get('params', {})
+        range_param = params.get('range', 'all')
+        start_time = params.get('start', '')
+        end_time = params.get('end', '')
+        
+        logger.info(f"   解析参数: range={range_param}, start={start_time}, end={end_time}")
+        
+        # 查询并计算
+        if start_time and end_time:
+            result = await self._get_summary_by_range(start_time, end_time)
+        else:
+            result = await self._get_summary(range_param)
+        
+        logger.info(f"✅ 统计任务完成，净盈亏: {result['net_pnl']}")
+        
+        # 交给 qd_server
+        from frontend_relay.qd_server import frontend_relay_instance
+        frontend_relay_instance.receive_stats_result(result)
+        
+    except Exception as e:
+        logger.error(f"❌ 统计任务执行失败: {e}", exc_info=True)
