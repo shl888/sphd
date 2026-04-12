@@ -162,9 +162,9 @@ class FrontendRelayServer:
                                                 })
                                             
                                             elif msg_type == 'order':
-                                                logger.info(f"💰【客户端】收到开仓指令，准备转发给大脑")
-                                                logger.info(f"   参数: {data2.get('data', {})}")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"💰【客户端】收到开仓指令，准备转发给大脑")
+                                                logger.debug(f"   参数: {data2.get('data', {})}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "place_order",
@@ -175,9 +175,9 @@ class FrontendRelayServer:
                                                 self.stats["commands_processed"] += 1
                                             
                                             elif msg_type == 'set_sl_tp':
-                                                logger.info(f"⚙️【客户端】收到止损止盈指令，准备转发给大脑")
-                                                logger.info(f"   参数: {data2.get('data', {})}")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"⚙️【客户端】收到止损止盈指令，准备转发给大脑")
+                                                logger.debug(f"   参数: {data2.get('data', {})}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "set_sl_tp",
@@ -188,9 +188,9 @@ class FrontendRelayServer:
                                                 self.stats["commands_processed"] += 1
                                             
                                             elif msg_type == 'close_position':
-                                                logger.info(f"🔚【客户端】收到平仓指令，准备转发给大脑")
-                                                logger.info(f"   参数: {data2.get('data', {})}")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"🔚【客户端】收到平仓指令，准备转发给大脑")
+                                                logger.debug(f"   参数: {data2.get('data', {})}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "close_position",
@@ -202,7 +202,7 @@ class FrontendRelayServer:
                                             
                                             elif msg_type == 'config':
                                                 logger.info(f"💾【客户端】收到配置指令，转发给大脑")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "save_config",
@@ -211,9 +211,9 @@ class FrontendRelayServer:
                                                 })
                                             
                                             elif msg_type == 'set_trade_mode':
-                                                logger.info(f"🎮【客户端】收到交易模式指令，转发给大脑")
-                                                logger.info(f"   模式: {data2.get('mode')}")
-                                                logger.info(f"   客户端: {client_id}")
+                                                logger.debug(f"🎮【客户端】收到交易模式指令，转发给大脑")
+                                                logger.debug(f"   模式: {data2.get('mode')}")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 await self.brain.handle_frontend_command({
                                                     "command": "set_trade_mode",
@@ -226,14 +226,14 @@ class FrontendRelayServer:
                                                 # qd_server 收到前端的 get_stats 指令
                                                 # 只负责转发数据给 StatsHandler，不参与任何业务逻辑
                                                 # StatsHandler 干完活会自己调用 broadcast_stats_result 推送结果给前端
-                                                logger.info(f"📊【客户端】收到统计指令")
-                                                logger.info(f"   请求参数: {data2}")
-                                                logger.info(f"   客户端: {client_id}")
-                                                logger.info(f"📤【客户端】转发统计指令给 StatsHandler 处理...")
+                                                logger.debug(f"📊【客户端】收到统计指令")
+                                                logger.debug(f"   请求参数: {data2}")
+                                                logger.debug(f"   客户端: {client_id}")
+                                                logger.debug(f"📤【客户端】转发统计指令给 StatsHandler 处理...")
                                                 
                                                 await self.stats_handler.handle(data2)
                                                 
-                                                logger.info(f"✅【客户端】统计指令已转发给 StatsHandler，等待处理完成")
+                                                logger.info(f"✅【客户端】统计指令已转发给 StatsHandler")
                                                 # ========== 统计指令处理结束 ==========
                                             
                                             else:
@@ -455,7 +455,7 @@ class FrontendRelayServer:
         response.headers['X-Accel-Buffering'] = 'no'  # 禁用 Nginx 缓冲
         await response.prepare(request)
         
-        logger.info(f"📋【日志流】开始推送，tail={tail_num}, keyword={keyword if keyword else '无'}")
+        logger.info(f"📋【客户端】【日志流】开始推送，tail={tail_num}, keyword={keyword if keyword else '无'}")
         
         try:
             # 4. 先推送最近 N 条历史日志
@@ -489,10 +489,10 @@ class FrontendRelayServer:
                 await response.write(line)
                 
         except asyncio.CancelledError:
-            logger.info("📋【日志流】客户端断开连接")
+            logger.info("📋【客户端】【日志流】客户端断开连接")
             raise
         except Exception as e:
-            logger.error(f"❌【日志流】推送失败: {e}", exc_info=True)
+            logger.error(f"❌【客户端】【日志流】推送失败: {e}", exc_info=True)
             error_msg = f"\n[错误] 日志流中断: {e}\n"
             await response.write(error_msg.encode('utf-8'))
         finally:
@@ -564,7 +564,7 @@ class FrontendRelayServer:
         else:
             full_cmd = f"{base_cmd} 2>&1 | tail -n {limit_num}"
         
-        logger.info(f"📋【历史日志】查询: range={time_range}, keyword={keyword if keyword else '无'}, limit={limit_num}")
+        logger.info(f"📋【客户端】【历史日志】查询: range={time_range}, keyword={keyword if keyword else '无'}, limit={limit_num}")
         logger.debug(f"📋【历史日志】执行命令: {full_cmd}")
         
         try:
@@ -574,7 +574,7 @@ class FrontendRelayServer:
             # 5. 按行分割
             lines = output.strip().split('\n') if output.strip() else []
             
-            logger.info(f"✅【历史日志】查询完成，返回 {len(lines)} 行")
+            logger.info(f"✅【客户端】【历史日志】查询完成，返回 {len(lines)} 行")
             
             return web.json_response({
                 "success": True,
@@ -591,7 +591,7 @@ class FrontendRelayServer:
             })
             
         except Exception as e:
-            logger.error(f"❌【历史日志】查询失败: {e}", exc_info=True)
+            logger.error(f"❌【客户端】【历史日志】查询失败: {e}", exc_info=True)
             return web.json_response({
                 "success": False,
                 "error": str(e),
@@ -676,10 +676,10 @@ class FrontendRelayServer:
             return stdout.decode('utf-8', errors='ignore')
             
         except asyncio.TimeoutError:
-            logger.error("❌ 命令执行超时")
+            logger.error("❌ 【客户端】命令执行超时")
             return ""
         except Exception as e:
-            logger.error(f"❌ 命令执行失败: {e}", exc_info=True)
+            logger.error(f"❌ 【客户端】命令执行失败: {e}", exc_info=True)
             raise
 
 
@@ -802,8 +802,8 @@ class FrontendRelayServer:
         Args:
             stats_data: StatsHandler 计算好的统计结果，包含净盈亏、交易次数等
         """
-        logger.info(f"📊【客户端】【统计结果推送】StatsHandler 调用推送方法")
-        logger.info(f"📊【客户端】【统计结果推送】当前已认证客户端数: {len([c for c in self.ws_clients if c.get('authenticated', False)])}")
+        logger.debug(f"📊【客户端】【统计结果推送】StatsHandler 调用推送方法")
+        logger.debug(f"📊【客户端】【统计结果推送】当前已认证客户端数: {len([c for c in self.ws_clients if c.get('authenticated', False)])}")
         
         if not self.ws_clients:
             logger.warning(f"⚠️【客户端】【统计结果推送】没有客户端连接，跳过推送")
@@ -814,7 +814,7 @@ class FrontendRelayServer:
         net_pnl_rate = stats_data.get('net_pnl_rate', 0.0)
         okx_trades = stats_data.get('okx_trades', 0)
         binance_trades = stats_data.get('binance_trades', 0)
-        logger.info(f"📊【客户端】【统计结果推送】数据摘要: 净盈亏={net_pnl}, 净盈亏率={net_pnl_rate}%, 欧易交易={okx_trades}笔, 币安交易={binance_trades}笔")
+        logger.debug(f"📊【客户端】【统计结果推送】数据摘要: 净盈亏={net_pnl}, 净盈亏率={net_pnl_rate}%, 欧易交易={okx_trades}笔, 币安交易={binance_trades}笔")
         
         message = {
             "type": "stats_result",
@@ -822,9 +822,9 @@ class FrontendRelayServer:
             "timestamp": time.time()
         }
         
-        logger.info(f"📤【客户端】【统计结果推送】开始广播给前端...")
+        logger.debug(f"📤【客户端】【统计结果推送】开始广播给前端...")
         await self._safe_broadcast(message)
-        logger.info(f"✅【客户端】【统计结果推送】广播完成")
+        logger.debug(f"✅【客户端】【统计结果推送】广播完成")
     
     async def _safe_broadcast(self, message):
         """
@@ -838,7 +838,7 @@ class FrontendRelayServer:
             return
         
         message_type = message.get('type', 'unknown')
-        logger.info(f"🔥【客户端】【广播开始】类型: {message_type}, 已认证客户端数: {len(authenticated_clients)}")
+        logger.debug(f"🔥【客户端】【广播开始】类型: {message_type}, 已认证客户端数: {len(authenticated_clients)}")
         
         dead_clients = []
         message_json = json.dumps(message, default=str)
@@ -862,7 +862,7 @@ class FrontendRelayServer:
             self.stats["current_connections"] = len(self.ws_clients)
         
         self.stats["messages_broadcast"] += len(authenticated_clients) - len(dead_clients)
-        logger.info(f"✅【客户端】【广播完成】类型: {message_type}, 成功发送到 {len(authenticated_clients) - len(dead_clients)} 个客户端")
+        logger.debug(f"✅【客户端】【广播完成】类型: {message_type}, 成功发送到 {len(authenticated_clients) - len(dead_clients)} 个客户端")
 
 
     # ======================================================================

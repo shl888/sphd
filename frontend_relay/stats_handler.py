@@ -68,7 +68,7 @@ class StatsHandler:
         """
         # ========== 保存 qd_server 引用 ==========
         self.qd_server = qd_server
-        logger.info(f"✅ 【数据统计处理器】qd_server 引用已保存")
+        logger.debug(f"✅ 【数据统计处理器】qd_server 引用已保存")
         # ========== qd_server 引用保存完毕 ==========
         
         # ========== 读取 MongoDB 连接信息 ==========
@@ -89,11 +89,11 @@ class StatsHandler:
             logger.info(f"✅ 【数据统计处理器】MongoDB 连接信息已读取: {masked_uri}")
         # ========== MongoDB 连接信息读取完毕 ==========
         
-        logger.info(f"✅ 【数据统计处理器】初始化完成")
-        logger.info(f"   - 时间差阈值: {TIME_DIFF_THRESHOLD} 秒")
-        logger.info(f"   - 杠杆倍数: {LEVERAGE}x")
-        logger.info(f"   - 手续费率: {FEE_RATE * 100}%")
-        logger.info(f"   - 小数位数: {DECIMAL_PLACES}")
+        logger.debug(f"✅ 【数据统计处理器】初始化完成")
+        logger.debug(f"   - 时间差阈值: {TIME_DIFF_THRESHOLD} 秒")
+        logger.debug(f"   - 杠杆倍数: {LEVERAGE}x")
+        logger.debug(f"   - 手续费率: {FEE_RATE * 100}%")
+        logger.debug(f"   - 小数位数: {DECIMAL_PLACES}")
     
     # ==================== 对外唯一入口 ====================
     
@@ -112,8 +112,8 @@ class StatsHandler:
             {"type": "get_stats", "start": "2026.01.01 00:00:00", "end": "2026.01.31 23:59:59"}  # 自定义
         """
         
-        logger.info(f"📊 【数据统计处理器】收到统计请求，开始处理")
-        logger.info(f"📊 【数据统计处理器】请求参数: {data}")
+        logger.info(f"📊 【数据统计处理器】收到统计指令，开始处理")
+        logger.info(f"📊 【数据统计处理器】指令参数: {data}")
         
         # ========== 1. 解析参数 ==========
         range_param = data.get('range', 'all')
@@ -147,7 +147,7 @@ class StatsHandler:
             logger.info(f"   - 净盈亏率: {result.get('net_pnl_rate', 0.0):.2f}%")
             
             # ========== 4. 调用 qd_server 推送结果 ==========
-            logger.info(f"📊 【数据统计处理器】【步骤4】调用 qd_server.broadcast_stats_result() 推送结果...")
+            logger.debug(f"📊 【数据统计处理器】【步骤4】调用 qd_server.broadcast_stats_result() 推送结果...")
             await self.qd_server.broadcast_stats_result(result)
             logger.info(f"✅ 【数据统计处理器】结果已推送给 qd_server")
             
@@ -159,7 +159,7 @@ class StatsHandler:
             await self.qd_server.broadcast_stats_result(self._empty_result())
             
         finally:
-            logger.info(f"📊 【数据统计处理器】========================================")
+            logger.debug(f"📊 【数据统计处理器】========================================")
     
     # ==================== 时间范围解析 ====================
     
@@ -194,7 +194,7 @@ class StatsHandler:
         Returns:
             统计结果字典
         """
-        logger.info(f"📊 【数据统计处理器】【数据库查询】开始...")
+        logger.debug(f"📊 【数据统计处理器】【数据库查询】开始...")
         
         # ========== 1. 从 MongoDB 查询数据 ==========
         records = await self._fetch_records(start_time, end_time)
