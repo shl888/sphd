@@ -36,7 +36,7 @@ import asyncio
 import logging
 import json
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,9 @@ TIME_DIFF_THRESHOLD = 60  # 套利配对时间差阈值（秒）
 LEVERAGE = 20             # 固定杠杆倍数
 FEE_RATE = 0.001          # 手续费率 0.1%（开仓+平仓合计）
 DECIMAL_PLACES = 4        # 保留小数位数
+
+# ==================== 时区设置 ====================
+BEIJING_TZ = timezone(timedelta(hours=8))  # 北京时间 UTC+8
 
 
 class StatsHandler:
@@ -94,6 +97,7 @@ class StatsHandler:
         logger.debug(f"   - 杠杆倍数: {LEVERAGE}x")
         logger.debug(f"   - 手续费率: {FEE_RATE * 100}%")
         logger.debug(f"   - 小数位数: {DECIMAL_PLACES}")
+        logger.debug(f"   - 时区: 北京时间 (UTC+8)")
     
     # ==================== 对外唯一入口 ====================
     
@@ -105,20 +109,21 @@ class StatsHandler:
             data: 前端发来的数据，包含 range 或 start/end
         
         数据格式示例：
-            {"type": "get_stats", "range": "all"}           # 全部历史
-            {"type": "get_stats", "range": "today"}         # 今日
-            {"type": "get_stats", "range": "week"}          # 本周
-            {"type": "get_stats", "range": "month"}         # 本月
-            {"type": "get_stats", "start": "2026.01.01 00:00:00", "end": "2026.01.31 23:59:59"}  # 自定义
+            {"type": "get_stats", "params": {"range": "all"}}           # 全部历史
+            {"type": "get_stats", "params": {"range": "today"}}         # 今日
+            {"type": "get_stats", "params": {"range": "week"}}          # 本周
+            {"type": "get_stats", "params": {"range": "month"}}         # 本月
+            {"type": "get_stats", "params": {"start": "2026.01.01 00:00:00", "end": "2026.01.31 23:59:59"}}  # 自定义
         """
         
         logger.info(f"📊 【数据统计处理器】收到统计指令，开始处理")
         logger.info(f"📊 【数据统计处理器】指令参数: {data}")
         
-        # ========== 1. 解析参数 ==========
-        range_param = data.get('range', 'all')
-        start_time = data.get('start', '')
-        end_time = data.get('end', '')
+        # ========== 1. 解析参数（从 params 里取） ==========
+        params = data.get('params', {})
+        range_param = params.get('range', 'all')
+        start_time = params.get('start', '')
+        end_time = params.get('end', '')
         
         logger.info(f"📊 【数据统计处理器】【步骤1】解析参数完成")
         logger.info(f"   - range: {range_param}")
@@ -228,7 +233,7 @@ class StatsHandler:
     
     def _parse_time_range(self, range_param: str) -> Tuple[Optional[str], Optional[str]]:
         """
-        解析时间范围参数
+        解析时间范围参数（使用北京时间 UTC+8）
         
         Args:
             range_param: all / today / week / month
@@ -243,18 +248,21 @@ class StatsHandler:
             logger.debug(f"   - 返回全部历史")
             return None, None
         
-        now = datetime.now()
-        end_time = now
+        # 使用北京时间
+        now = datetime.now(BEIJING_TZ)
         
         if range_param == 'today':
             start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            logger.debug(f"   - 今日: 从 {start_time} 开始")
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            logger.debug(f"   - 今日: 从 {start_time} 到 {end_time}")
         elif range_param == 'week':
             start_time = now - timedelta(days=7)
-            logger.debug(f"   - 本周: 从 {start_time} 开始")
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            logger.debug(f"   - 本周: 从 {start_time} 到 {end_time}")
         elif range_param == 'month':
             start_time = now - timedelta(days=30)
-            logger.debug(f"   - 本月: 从 {start_time} 开始")
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            logger.debug(f"   - 本月: 从 {start_time} 到 {end_time}")
         else:
             logger.warning(f"⚠️ 【数据统计处理器】未知范围参数: {range_param}，使用全部历史")
             return None, None
@@ -459,8 +467,8 @@ class StatsHandler:
         计算所有统计指标
         
         计算公式：
-            - 手续费 = 平均保证金 × 杠杆 × 手续费率 × 交易次数
-            - 净盈亏 = 总资金费 + 总平仓收益 - 总手续费
+            - 手续费 = 平均保证金 × 杠杆 × 手续费率 × 交易次数（结果转为负数）
+            - 净盈亏 = 净平仓收益 + 净资金费 + 净手续费
             - 净盈亏率 = (净盈亏 × 100) / 平均总保证金
         
         Args:
@@ -478,6 +486,8 @@ class StatsHandler:
         okx_total_funding = self._calc_sum(okx_records, '累计资金费')
         okx_total_profit = self._calc_sum(okx_records, '平仓收益')
         okx_total_fee = okx_avg_margin * LEVERAGE * FEE_RATE * okx_trades
+        # 手续费转为负数
+        okx_total_fee = -okx_total_fee
         
         logger.debug(f"📊 【数据统计处理器】欧易: 交易={okx_trades}, 均保证金={okx_avg_margin:.4f}, 资金费={okx_total_funding:.4f}, 收益={okx_total_profit:.4f}, 手续费={okx_total_fee:.4f}")
         
@@ -487,6 +497,8 @@ class StatsHandler:
         binance_total_funding = self._calc_sum(binance_records, '累计资金费')
         binance_total_profit = self._calc_sum(binance_records, '平仓收益')
         binance_total_fee = binance_avg_margin * LEVERAGE * FEE_RATE * binance_trades
+        # 手续费转为负数
+        binance_total_fee = -binance_total_fee
         
         logger.debug(f"📊 【数据统计处理器】币安: 交易={binance_trades}, 均保证金={binance_avg_margin:.4f}, 资金费={binance_total_funding:.4f}, 收益={binance_total_profit:.4f}, 手续费={binance_total_fee:.4f}")
         
@@ -494,7 +506,8 @@ class StatsHandler:
         net_fee = okx_total_fee + binance_total_fee
         net_funding = okx_total_funding + binance_total_funding
         net_profit = okx_total_profit + binance_total_profit
-        net_pnl = net_funding + net_profit - net_fee
+        # 净盈亏 = 净平仓收益 + 净资金费 + 净手续费
+        net_pnl = net_profit + net_funding + net_fee
         
         # 平均总保证金（双边）
         avg_total_margin = (okx_avg_margin + binance_avg_margin) / 2
