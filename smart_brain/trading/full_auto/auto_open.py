@@ -14,11 +14,13 @@
 - 任何步骤失败（除资产检查外），10秒后从第一步（读取数据）重新开始
 - 最多重试2次（即总共执行3次完整流程）
 - 资产检查失败直接结束，不重试
+- 发给大脑不参与重试
 
 合约筛选条件（必须同时满足）：
 - 费率差 > 0.8
 - 欧易结算倒计时 < 200秒
 - 币安结算倒计时 < 200秒
+- 方向一致性：费率低的交易所，价格也必须低
 
 精选规则：
 - 1个合约：直接选中
@@ -252,11 +254,6 @@ class Scout:
             
             logger.info(f"📋【全自动侦察兵】开仓指令已生成: symbol={selected_symbol}, margin={margin:.2f}, direction={direction}")
             
-            # 步骤9：发给大脑
-            await self._send_to_brain()
-            
-            return True, False
-            
         except asyncio.CancelledError:
             logger.info("🛑【全自动侦察兵】侦察任务被取消")
             raise
@@ -265,6 +262,11 @@ class Scout:
             import traceback
             logger.error(traceback.format_exc())
             return False, True
+        
+        # 步骤9：发给大脑（不参与重试）
+        await self._send_to_brain()
+        
+        return True, False
     
     # ==================== 数据读取 ====================
     
@@ -342,6 +344,58 @@ class Scout:
             logger.error(f"❌【全自动侦察兵】检查资产异常: {e}")
             return False
     
+    # ==================== 费率与价格比较（复用逻辑）====================
+    
+    def _get_rate_and_price_comparison(self, symbol_data: Dict) -> Tuple[bool, bool]:
+        """
+        获取费率比较和价格比较的结果
+        
+        返回:
+            okx_rate_lower: 欧易费率是否低于币安
+            okx_price_lower: 欧易价格是否低于币安
+        """
+        try:
+            okx_rate = float(symbol_data.get('okx_funding_rate') or 0)
+            binance_rate = float(symbol_data.get('binance_funding_rate') or 0)
+            okx_price = float(symbol_data.get('okx_trade_price') or 0)
+            binance_price = float(symbol_data.get('binance_trade_price') or 0)
+            
+            return okx_rate < binance_rate, okx_price < binance_price
+        except Exception as e:
+            logger.error(f"⚠️【全自动侦察兵】获取费率与价格比较异常: {e}")
+            return False, False
+    
+    def _check_direction_consistency(self, symbol_data: Dict) -> bool:
+        """
+        检查方向一致性：费率低的交易所，价格是否也低
+        
+        返回 True 表示方向一致（情况一），False 表示方向冲突（情况二）
+        """
+        try:
+            okx_rate_lower, okx_price_lower = self._get_rate_and_price_comparison(symbol_data)
+            
+            # 检查价格是否有效
+            okx_price = float(symbol_data.get('okx_trade_price') or 0)
+            binance_price = float(symbol_data.get('binance_trade_price') or 0)
+            
+            if okx_price == 0 or binance_price == 0:
+                logger.warning(f"⚠️【全自动侦察兵】价格数据缺失，无法判断方向一致性")
+                return False
+            
+            # 方向一致 = 费率低的那边价格也低
+            is_consistent = (okx_rate_lower == okx_price_lower)
+            
+            if is_consistent:
+                logger.info(f"✅ 【全自动侦察兵】方向一致: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
+            else:
+                logger.info(f"❌ 【全自动侦察兵】方向冲突: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
+            
+            return is_consistent
+            
+        except Exception as e:
+            logger.error(f"⚠️【全自动侦察兵】检查方向一致性异常: {e}")
+            return False
+    
     def _select_best_symbol(self, market_data: Dict) -> Optional[str]:
         """
         筛选最佳交易标的
@@ -350,6 +404,7 @@ class Scout:
         1. 费率差 > 0.8
         2. 欧易结算倒计时 < 200秒
         3. 币安结算倒计时 < 200秒
+        4. 方向一致性：费率低的交易所，价格也必须低
         
         精选规则：
         - 1个合约：直接选中
@@ -365,21 +420,26 @@ class Scout:
                 rate_diff = float(data.get('rate_diff') or 0)
                 okx_countdown = int(data.get('okx_countdown_seconds') or 0)
                 binance_countdown = int(data.get('binance_countdown_seconds') or 0)
+                # 这里的0.3只是测试用，实战时改回0.8
                 
-                
-                # 这里的0.3，只是测试用，其实是0.8
-                
-                # 三个必须同时满足的条件
+                # 条件1：费率差检查
                 if rate_diff <= 0.3:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 费率差不足: {rate_diff} <= 0.8")
+                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 费率差不足: {rate_diff} <= 0.3")
                     continue
                 
+                # 条件2：欧易倒计时检查
                 if okx_countdown >= 200:
                     logger.debug(f"⏭️【全自动侦察兵】{symbol} 欧易倒计时过长: {okx_countdown} >= 200")
                     continue
                 
+                # 条件3：币安倒计时检查
                 if binance_countdown >= 200:
                     logger.debug(f"⏭️【全自动侦察兵】{symbol} 币安倒计时过长: {binance_countdown} >= 200")
+                    continue
+                
+                # 条件4：方向一致性检查（新增）
+                if not self._check_direction_consistency(data):
+                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 方向不一致，跳过")
                     continue
                 
                 # 满足所有条件的合约
@@ -397,7 +457,7 @@ class Scout:
                 continue
         
         if not candidates:
-            logger.warning("⚠️【全自动侦察兵】未找到同时满足三个条件的合约")
+            logger.warning("⚠️【全自动侦察兵】未找到同时满足四个条件的合约")
             return None
         
         # 精选规则
@@ -416,12 +476,14 @@ class Scout:
     def _determine_direction(self, symbol_data: Dict) -> str:
         """根据资金费率决定方向"""
         try:
+            okx_rate_lower, _ = self._get_rate_and_price_comparison(symbol_data)
+            
             okx_rate = float(symbol_data.get('okx_funding_rate') or 0)
             binance_rate = float(symbol_data.get('binance_funding_rate') or 0)
             
             logger.info(f"📊【全自动侦察兵】资金费率: 欧易={okx_rate}, 币安={binance_rate}")
             
-            if okx_rate < binance_rate:
+            if okx_rate_lower:
                 logger.info(f"📈【全自动侦察兵】方向: 欧易做多，币安做空")
                 return "long_okx_short_binance"
             else:
