@@ -5,11 +5,18 @@
 运行方式：
 1. 下单工人启动后，一直循环等待消息
 2. 收到消息（订单参数）后，异步处理
-3. 处理完成后，把结果消息发给大脑
+3. 处理完成后：
+   - 执行结果数据发给大脑
+   - 标签发给标签调度器
 4. 空闲时：歇着 / 定时校准币安时间
 
+数据流向：
+- 大脑 → 下单工人：订单参数（send_orders）
+- 下单工人 → 大脑：执行结果（on_trader_results）
+- 下单工人 → 标签调度器：标签（receive）
+
 各个工人文件，单方向> 下单工人
-下单工人文件，单方向> 大脑。 
+下单工人文件，单方向> 大脑 / 标签调度器
 之间通过数据传递，数据驱动工作，没有调用关系
 """
 
@@ -40,6 +47,9 @@ class Trader:
         self.brain = brain
         self.use_sandbox = use_sandbox
         self._executor = ThreadPoolExecutor(max_workers=10)
+        
+        # 标签调度器（由大脑注入）
+        self.tag_dispatcher = None
         
         # 消息队列：大脑发来的订单放这里
         self._order_queue = asyncio.Queue()
@@ -130,31 +140,24 @@ class Trader:
                     tasks.append(self._send_order(order, creds))
             
             results = await asyncio.gather(*tasks)
-            await self._send_results_to_brain(results)
+            await self._send_results(results)
             
-            logger.info(f"✅【下单工人】处理完成，共 {len(results)} 个结果已发回大脑")
+            logger.info(f"✅【下单工人】处理完成，共 {len(results)} 个结果已发送")
             
         except Exception as e:
             logger.error(f"❌【下单工人】处理订单异常: {e}")
-            await self._send_results_to_brain([{
-                "success": False,
-                "error": f"工人处理异常: {str(e)}"
-            }])
+            await self._send_error_to_brain(f"工人处理异常: {str(e)}")
     
-    async def _send_results_to_brain(self, results: List[Dict]):
+    async def _send_results(self, results: List[Dict]):
         """
-        把结果消息发给大脑（分两条独立发送）
+        发送处理结果
         
         对于每个结果：
-        1. 发送原始数据（不包含标签）
-        2. 如果成功，发送独立的信息标签
+        1. 执行结果数据 → 发给大脑
+        2. 如果成功，生成标签 → 发给标签调度器
         """
-        if not hasattr(self.brain, 'on_trader_results'):
-            logger.error("❌【下单工人】大脑没有实现 on_trader_results 方法")
-            return
-        
         for result in results:
-            # 第一条：原始数据（原样发送，不添加任何字段）
+            # 第一条：执行结果数据 → 发给大脑
             original_data = {
                 "success": result.get("success"),
                 "exchange": result.get("exchange"),
@@ -162,13 +165,31 @@ class Trader:
                 "data": result.get("data", {}),
                 "error": result.get("error")
             }
-            await self.brain.on_trader_results(original_data)
             
-            # 第二条：如果成功，生成并发送信息标签
+            if hasattr(self.brain, 'on_trader_results'):
+                await self.brain.on_trader_results(original_data)
+                logger.info(f"📤【下单工人】执行结果已发给大脑")
+            else:
+                logger.error("❌【下单工人】大脑没有实现 on_trader_results 方法")
+            
+            # 第二条：如果成功，生成标签 → 发给标签调度器
             if result.get("success"):
                 info_tag = self._generate_info_tag(result)
                 if info_tag:
-                    await self.brain.on_trader_results(info_tag)
+                    if self.tag_dispatcher and hasattr(self.tag_dispatcher, 'receive'):
+                        await self.tag_dispatcher.receive(info_tag)
+                        logger.info(f"🏷️【下单工人】标签已发给调度器: {info_tag.get('info')}")
+                    else:
+                        logger.warning("⚠️【下单工人】标签调度器未注入或没有 receive 方法，标签丢弃")
+    
+    async def _send_error_to_brain(self, error_msg: str):
+        """发送错误信息给大脑"""
+        error_data = {
+            "success": False,
+            "error": error_msg
+        }
+        if hasattr(self.brain, 'on_trader_results'):
+            await self.brain.on_trader_results(error_data)
     
     def _generate_info_tag(self, result: Dict) -> Dict:
         """
