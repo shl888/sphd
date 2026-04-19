@@ -17,7 +17,8 @@
 - 发给大脑不参与重试
 
 合约筛选条件（必须同时满足）：
-- 费率差 > 0.8
+- 费率差 >= 0.8
+- 价差 <= 5%
 - 欧易结算倒计时 < 200秒
 - 币安结算倒计时 < 200秒
 - 方向一致性：费率低的交易所，价格也必须低
@@ -401,10 +402,11 @@ class Scout:
         筛选最佳交易标的
         
         条件（必须同时满足）：
-        1. 费率差 > 0.8
-        2. 欧易结算倒计时 < 200秒
-        3. 币安结算倒计时 < 200秒
-        4. 方向一致性：费率低的交易所，价格也必须低
+        1. 费率差 >= 0.8
+        2. 价差 <= 5%
+        3. 欧易结算倒计时 < 200秒
+        4. 币安结算倒计时 < 200秒
+        5. 方向一致性：费率低的交易所，价格也必须低
         
         精选规则：
         - 1个合约：直接选中
@@ -418,26 +420,32 @@ class Scout:
             
             try:
                 rate_diff = float(data.get('rate_diff') or 0)
+                price_diff_percent = float(data.get('trade_price_diff_percent') or 0)
                 okx_countdown = int(data.get('okx_countdown_seconds') or 0)
                 binance_countdown = int(data.get('binance_countdown_seconds') or 0)
                 # 这里的0.3只是测试用，实战时改回0.8
                 
                 # 条件1：费率差检查
-                if rate_diff <= 0.3:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 费率差不足: {rate_diff} <= 0.3")
+                if rate_diff < 0.3:
+                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 费率差不足: {rate_diff} < 0.3")
                     continue
                 
-                # 条件2：欧易倒计时检查
+                # 条件2：价差检查（新增）
+                if price_diff_percent > 5:
+                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 价差过大: {price_diff_percent}% > 5%")
+                    continue
+                
+                # 条件3：欧易倒计时检查
                 if okx_countdown >= 200:
                     logger.debug(f"⏭️【全自动侦察兵】{symbol} 欧易倒计时过长: {okx_countdown} >= 200")
                     continue
                 
-                # 条件3：币安倒计时检查
+                # 条件4：币安倒计时检查
                 if binance_countdown >= 200:
                     logger.debug(f"⏭️【全自动侦察兵】{symbol} 币安倒计时过长: {binance_countdown} >= 200")
                     continue
                 
-                # 条件4：方向一致性检查（新增）
+                # 条件5：方向一致性检查
                 if not self._check_direction_consistency(data):
                     logger.debug(f"⏭️【全自动侦察兵】{symbol} 方向不一致，跳过")
                     continue
@@ -450,14 +458,14 @@ class Scout:
                     'binance_countdown': binance_countdown
                 })
                 
-                logger.info(f"✅【全自动侦察兵】符合条件的合约: {symbol}, rate_diff={rate_diff}, 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
+                logger.info(f"✅【全自动侦察兵】符合条件的合约: {symbol}, rate_diff={rate_diff}, price_diff={price_diff_percent}%, 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
                 
             except Exception as e:
                 logger.debug(f"⚠️【全自动侦察兵】解析合约 {symbol} 数据异常: {e}")
                 continue
         
         if not candidates:
-            logger.warning("⚠️【全自动侦察兵】未找到同时满足四个条件的合约")
+            logger.warning("⚠️【全自动侦察兵】未找到同时满足五个条件的合约")
             return None
         
         # 精选规则
