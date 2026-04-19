@@ -177,7 +177,7 @@ class Trader:
                 info_tag = self._generate_info_tag(result)
                 if info_tag:
                     if self.tag_dispatcher and hasattr(self.tag_dispatcher, 'receive'):
-                        await self.tag_dispatcher.receive(info_tag)
+                        asyncio.create_task(self.tag_dispatcher.receive(info_tag))
                         logger.info(f"🏷️【下单工人】标签已发给调度器: {info_tag.get('info')}")
                     else:
                         logger.warning("⚠️【下单工人】标签调度器未注入或没有 receive 方法，标签丢弃")
