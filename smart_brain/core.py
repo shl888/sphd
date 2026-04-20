@@ -237,7 +237,8 @@ class SmartBrain:
                     self.funding_sltp.on_data({"info": "开启全自动"})
                 if self.funding_close:
                     self.funding_close.on_data({"info": "开启全自动"})
-"""                # 价差套利工人
+"""
+                # 价差套利工人
                 if self.spread_open:
                     self.spread_open.on_data({"info": "开启全自动"})
                 if self.spread_sltp:
@@ -256,7 +257,8 @@ class SmartBrain:
                     self.funding_sltp.on_data({"info": "结束全自动"})
                 if self.funding_close:
                     self.funding_close.on_data({"info": "结束全自动"})
-"""                # 价差套利工人
+"""
+                # 价差套利工人
                 if self.spread_open:
                     self.spread_open.on_data({"info": "结束全自动"})
                 if self.spread_sltp:
