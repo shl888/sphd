@@ -302,21 +302,21 @@ class SmartBrain:
                     "error": "当前为禁止交易模式，无法执行开仓"
                 }
             
-            logger.info(f"💰【智能大脑】收到开仓指令，直接转发给工人")
+            logger.info(f"💰【智能大脑】收到开仓指令，直接转发给半自动工人")
             
             # 大脑不解析，直接转发给杠杆工人和开仓工人
             if self.leverage_worker:
                 self.leverage_worker.on_data({"command": "place_order", "params": params})
-                logger.info(f"📤【智能大脑】开仓指令已转发给杠杆工人")
+                logger.info(f"📤【智能大脑】开仓指令已转发给半自动杠杆工人")
             if self.open_worker:
                 self.open_worker.on_data({"command": "place_order", "params": params})
-                logger.info(f"📤【智能大脑】开仓指令已转发给开仓工人")
+                logger.info(f"📤【智能大脑】开仓指令已转发给半自动开仓工人")
             
             return {
                 "success": True,
                 "received": True,
                 "command": command,
-                "message": "开仓指令已转发给工人"
+                "message": "开仓指令已转发给半自动开仓工人"
             }
         
         # ========== 止损止盈指令（半自动） ==========
@@ -334,13 +334,13 @@ class SmartBrain:
             
             if self.sl_tp_worker:
                 self.sl_tp_worker.on_data({"type": "set_sl_tp", "data": params})
-                logger.info(f"📤【智能大脑】止损止盈指令已转发给止损止盈工人")
+                logger.info(f"📤【智能大脑】止损止盈指令已转发给半自动止损止盈工人")
             
             return {
                 "success": True,
                 "received": True,
                 "command": command,
-                "message": "止损止盈指令已转发给工人"
+                "message": "止损止盈指令已转发给半自动止损止盈工人"
             }
         
         # ========== 平仓指令（半自动） ==========
@@ -354,17 +354,17 @@ class SmartBrain:
                     "error": "当前为禁止交易模式，无法执行平仓"
                 }
             
-            logger.info(f"🔚【智能大脑】收到平仓指令，直接转发给工人")
+            logger.info(f"🔚【智能大脑】收到平仓指令，直接转发给半自动清仓工人")
             
             if self.close_worker:
                 self.close_worker.on_data({"type": "close_position", "data": params})
-                logger.info(f"📤【智能大脑】平仓指令已转发给平仓工人")
+                logger.info(f"📤【智能大脑】平仓指令已转发给半自动清仓工人")
             
             return {
                 "success": True,
                 "received": True,
                 "command": command,
-                "message": "平仓指令已转发给工人"
+                "message": "平仓指令已转发给半自动清仓工人"
             }
         
         # ========== 未知指令 ==========

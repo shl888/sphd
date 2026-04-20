@@ -74,7 +74,7 @@ class TagDispatcher:
             "欧易开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
             "币安开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
             
-            # ========== 策略标签（广播给两套策略的止损止盈和平仓工人） ==========
+            # ========== 策略标签（广播给两套策略的止损止盈和清仓工人） ==========
             # 等价差工人实现后，把注释去掉
             "当前策略:资金费套利": ["funding_sltp", "funding_close"],  # + "spread_sltp", "spread_close"
             "当前策略:价差套利": ["funding_sltp", "funding_close"],    # + "spread_sltp", "spread_close"
