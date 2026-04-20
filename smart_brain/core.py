@@ -237,15 +237,14 @@ class SmartBrain:
                     self.funding_sltp.on_data({"info": "开启全自动"})
                 if self.funding_close:
                     self.funding_close.on_data({"info": "开启全自动"})
-"""
-                # 价差套利工人
-                if self.spread_open:
-                    self.spread_open.on_data({"info": "开启全自动"})
-                if self.spread_sltp:
-                    self.spread_sltp.on_data({"info": "开启全自动"})
-                if self.spread_close:
-                    self.spread_close.on_data({"info": "开启全自动"})
-"""
+
+#                # 价差套利工人
+#                if self.spread_open:
+#                    self.spread_open.on_data({"info": "开启全自动"})
+#                if self.spread_sltp:
+#                    self.spread_sltp.on_data({"info": "开启全自动"})
+#                if self.spread_close:
+#                    self.spread_close.on_data({"info": "开启全自动"})
                 logger.info("🎮【智能大脑】已向全自动工人发送「开启全自动」标签")
             
             # 从全自动切换到其他模式：发送「结束全自动」标签
@@ -257,15 +256,14 @@ class SmartBrain:
                     self.funding_sltp.on_data({"info": "结束全自动"})
                 if self.funding_close:
                     self.funding_close.on_data({"info": "结束全自动"})
-"""
-                # 价差套利工人
-                if self.spread_open:
-                    self.spread_open.on_data({"info": "结束全自动"})
-                if self.spread_sltp:
-                    self.spread_sltp.on_data({"info": "结束全自动"})
-                if self.spread_close:
-                    self.spread_close.on_data({"info": "结束全自动"})
-"""
+
+#                # 价差套利工人
+#                if self.spread_open:
+#                    self.spread_open.on_data({"info": "结束全自动"})
+#                if self.spread_sltp:
+#                    self.spread_sltp.on_data({"info": "结束全自动"})
+#                if self.spread_close:
+#                    self.spread_close.on_data({"info": "结束全自动"})
                 logger.info("🎮【智能大脑】已向全自动工人发送「结束全自动」标签")
             
             logger.info(f"🎮【智能大脑】交易模式已切换: {old_mode} → {self.trade_mode}")
