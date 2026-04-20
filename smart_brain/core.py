@@ -69,10 +69,15 @@ class SmartBrain:
         self.sl_tp_worker = None         # 止损止盈
         self.close_worker = None         # 平仓
         
-        # ========== 全自动工人 ==========
-        self.auto_open = None            # 侦察兵，检测开仓条件
-        self.auto_sltp = None            # 止损止盈
-        self.auto_close = None           # 持续监控清仓
+        # ========== 全自动工人 - 资金费套利 ==========
+        self.funding_open = None         # 侦察兵，检测开仓条件
+        self.funding_sltp = None         # 止损止盈
+        self.funding_close = None        # 持续监控清仓
+        
+        # ========== 全自动工人 - 价差套利 ==========
+        self.spread_open = None          # 侦察兵，检测开仓条件
+        self.spread_sltp = None          # 止损止盈
+        self.spread_close = None         # 持续监控清仓
         
         # ========== 运行状态 ==========
         self.running = False
@@ -127,23 +132,32 @@ class SmartBrain:
             self.close_worker = ClosePositionWorker(self)
             logger.info("✅【智能大脑】半自动工人已创建（杠杆、开仓、止损止盈、平仓）")
             
-            # 3. 创建全自动工人
-            from .trading.full_auto import AutoOpen, AutoSlTp, AutoClose
+            # 3. 创建全自动工人 - 资金费套利
+            from .trading.full_auto.funding import FundingOpen, FundingClose, FundingSlTp
             
-            self.auto_open = AutoOpen(self)
-            self.auto_sltp = AutoSlTp(self)
-            self.auto_close = AutoClose(self)
-            logger.info("✅【智能大脑】全自动工人已创建（侦察兵、止损止盈、清仓）")
+            self.funding_open = FundingOpen(self)
+            self.funding_sltp = FundingSlTp(self)
+            self.funding_close = FundingClose(self)
+            logger.info("✅【智能大脑】资金费套利工人已创建（侦察兵、止损止盈、清仓）")
             
-            # 4. 创建标签调度器
+            # 4. 创建全自动工人 - 价差套利
+            from .trading.full_auto.spread import SpreadOpen, SpreadClose, SpreadSlTp
+            
+            self.spread_open = SpreadOpen(self)
+            self.spread_sltp = SpreadSlTp(self)
+            self.spread_close = SpreadClose(self)
+            logger.info("✅【智能大脑】价差套利工人已创建（侦察兵、止损止盈、清仓）")
+            
+            # 5. 创建标签调度器
             from .tag_dispatcher import TagDispatcher
             self.tag_dispatcher = TagDispatcher(
                 open_worker=self.open_worker,
-                auto_sltp=self.auto_sltp
+                funding_sltp=self.funding_sltp,
+                spread_sltp=self.spread_sltp
             )
             logger.info("✅【智能大脑】标签调度器已创建")
             
-            # 5. 创建下单工人
+            # 6. 创建下单工人
             from http_server.trader import Trader
             self.trader = Trader(self, use_sandbox=True)
             # 将标签调度器注入给下单工人
@@ -151,10 +165,10 @@ class SmartBrain:
             asyncio.create_task(self.trader.start())
             logger.info("✅【智能大脑】下单工人已创建并启动（已注入标签调度器）")
             
-            # 6. 启动状态日志任务
+            # 7. 启动状态日志任务
             self.status_log_task = asyncio.create_task(self.data_manager._log_data_status())
             
-            # 7. 完成初始化
+            # 8. 完成初始化
             self.running = True
             logger.info("✅【智能大脑】大脑核心初始化完成")
             
@@ -215,23 +229,41 @@ class SmartBrain:
             self.trade_mode = new_mode
             
             # 切换到全自动模式：发送「开启全自动」标签
-            if new_mode == '全自动' and old_mode != '全自动':
-                if self.auto_open:
-                    self.auto_open.on_data({"info": "开启全自动"})
-                if self.auto_sltp:
-                    self.auto_sltp.on_data({"info": "开启全自动"})
-                if self.auto_close:
-                    self.auto_close.on_data({"info": "开启全自动"})
+            if new_mode == '全自動' and old_mode != '全自動':
+                # 资金费套利工人
+                if self.funding_open:
+                    self.funding_open.on_data({"info": "开启全自动"})
+                if self.funding_sltp:
+                    self.funding_sltp.on_data({"info": "开启全自动"})
+                if self.funding_close:
+                    self.funding_close.on_data({"info": "开启全自动"})
+"""                # 价差套利工人
+                if self.spread_open:
+                    self.spread_open.on_data({"info": "开启全自动"})
+                if self.spread_sltp:
+                    self.spread_sltp.on_data({"info": "开启全自动"})
+                if self.spread_close:
+                    self.spread_close.on_data({"info": "开启全自动"})
+"""
                 logger.info("🎮【智能大脑】已向全自动工人发送「开启全自动」标签")
             
             # 从全自动切换到其他模式：发送「结束全自动」标签
-            elif old_mode == '全自动' and new_mode != '全自动':
-                if self.auto_open:
-                    self.auto_open.on_data({"info": "结束全自动"})
-                if self.auto_sltp:
-                    self.auto_sltp.on_data({"info": "结束全自动"})
-                if self.auto_close:
-                    self.auto_close.on_data({"info": "结束全自动"})
+            elif old_mode == '全自動' and new_mode != '全自動':
+                # 资金费套利工人
+                if self.funding_open:
+                    self.funding_open.on_data({"info": "结束全自动"})
+                if self.funding_sltp:
+                    self.funding_sltp.on_data({"info": "结束全自动"})
+                if self.funding_close:
+                    self.funding_close.on_data({"info": "结束全自动"})
+"""                # 价差套利工人
+                if self.spread_open:
+                    self.spread_open.on_data({"info": "结束全自动"})
+                if self.spread_sltp:
+                    self.spread_sltp.on_data({"info": "结束全自动"})
+                if self.spread_close:
+                    self.spread_close.on_data({"info": "结束全自动"})
+"""
                 logger.info("🎮【智能大脑】已向全自动工人发送「结束全自动」标签")
             
             logger.info(f"🎮【智能大脑】交易模式已切换: {old_mode} → {self.trade_mode}")
@@ -373,13 +405,21 @@ class SmartBrain:
         
         try:
             # 1. 如果当前是全自动模式，先发送结束标签
-            if self.trade_mode == '全自动':
-                if self.auto_open:
-                    self.auto_open.on_data({"info": "结束全自动"})
-                if self.auto_sltp:
-                    self.auto_sltp.on_data({"info": "结束全自动"})
-                if self.auto_close:
-                    self.auto_close.on_data({"info": "结束全自动"})
+            if self.trade_mode == '全自動':
+                # 资金费套利工人
+                if self.funding_open:
+                    self.funding_open.on_data({"info": "结束全自动"})
+                if self.funding_sltp:
+                    self.funding_sltp.on_data({"info": "结束全自动"})
+                if self.funding_close:
+                    self.funding_close.on_data({"info": "结束全自动"})
+                # 价差套利工人
+                if self.spread_open:
+                    self.spread_open.on_data({"info": "结束全自动"})
+                if self.spread_sltp:
+                    self.spread_sltp.on_data({"info": "结束全自动"})
+                if self.spread_close:
+                    self.spread_close.on_data({"info": "结束全自动"})
                 logger.info("🎮【智能大脑】已向全自动工人发送「结束全自动」标签")
             
             # 2. 关闭HTTP模块服务

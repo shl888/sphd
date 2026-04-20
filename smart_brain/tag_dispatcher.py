@@ -5,15 +5,16 @@
 - 单向流动：只接收标签，转发给工人，不返回任何结果
 - 标签驱动：根据标签内容决定转发目标，不关心来源
 - 完全解耦：发送方不知道谁接收，接收方不知道谁发送
+- 广播机制：一个标签可以同时发给多个工人
 
 职责：
 - 接收下单工人发来的 info 标签
-- 根据标签内容转发给对应的工人
+- 根据标签内容转发给对应的工人（支持广播）
 - 不处理业务逻辑，只做路由
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -24,46 +25,59 @@ class TagDispatcher:
     
     工作流程：
     1. 接收带 info 字段的标签数据
-    2. 根据标签内容匹配转发目标
-    3. 调用目标工人的 on_data() 方法
+    2. 根据标签内容匹配转发目标列表
+    3. 遍历目标列表，调用每个工人的 on_data() 方法
     """
     
-    def __init__(self, open_worker=None, auto_sltp=None):
+    def __init__(
+        self,
+        open_worker=None,
+        funding_sltp=None,
+        funding_close=None,
+        spread_sltp=None,
+        spread_close=None
+    ):
         """
         初始化标签调度器
         
         参数:
             open_worker: 半自动开仓工人
-            auto_sltp: 全自动止损止盈工人
+            funding_sltp: 资金费套利 - 止损止盈工人
+            funding_close: 资金费套利 - 清仓工人
+            spread_sltp: 价差套利 - 止损止盈工人（暂未实现）
+            spread_close: 价差套利 - 清仓工人（暂未实现）
         """
         self.open_worker = open_worker
-        self.auto_sltp = auto_sltp
+        self.funding_sltp = funding_sltp
+        self.funding_close = funding_close
+        self.spread_sltp = spread_sltp
+        self.spread_close = spread_close
         
-        # 标签路由表
+        # 标签路由表（值可以是单个工人属性名，也可以是列表）
         self._route_table = self._build_route_table()
         
         logger.info("🏷️【标签调度器】初始化完成")
         logger.info(f"📋【标签调度器】路由表: {list(self._route_table.keys())}")
     
-    def _build_route_table(self) -> Dict[str, str]:
+    def _build_route_table(self) -> Dict[str, Any]:
         """
         构建标签路由表
         
-        返回格式: {标签内容: 目标工人属性名}
+        返回格式: {标签内容: 目标工人属性名 或 目标工人属性名列表}
         """
         return {
             # 杠杆设置成功 → 半自动开仓工人
             "欧易杠杆设置成功": "open_worker",
             "币安杠杆设置成功": "open_worker",
             
-            # 开仓成功 → 全自动止损止盈工人
-            "欧易开仓成功": "auto_sltp",
-            "币安开仓成功": "auto_sltp",
+            # 开仓成功 → 两套策略的止损止盈工人（广播）
+            "欧易开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
+            "币安开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
             
-            # ========== 🆕 新增：策略标签（暂时只接收，不转发） ==========
-            # 等价差策略的平仓文件写好后，再配置转发目标
-            "当前策略:资金费套利": None,
-            "当前策略:价差套利": None,
+            # ========== 策略标签（广播给两套策略的止损止盈和平仓工人） ==========
+            # 等价差工人实现后，把注释去掉
+            "当前策略:资金费套利": ["funding_sltp", "funding_close"],  # + "spread_sltp", "spread_close"
+            "当前策略:价差套利": ["funding_sltp", "funding_close"],    # + "spread_sltp", "spread_close"
         }
     
     async def receive(self, tag_data: Dict[str, Any]) -> None:
@@ -80,33 +94,43 @@ class TagDispatcher:
             return
         
         # 查找路由
-        worker_attr = self._route_table.get(info)
+        target = self._route_table.get(info)
         
-        if worker_attr is None:
+        if target is None:
             # 路由表中明确配置为 None，表示暂时不转发
             logger.info(f"📭【标签调度器】收到标签但暂不转发: {info}")
             return
         
-        if worker_attr == "":
+        if target == "":
             # 未配置路由
             logger.warning(f"⚠️【标签调度器】未知标签: {info}")
             return
         
-        # 获取目标工人
-        worker = getattr(self, worker_attr, None)
+        # 统一转成列表处理
+        target_list = target if isinstance(target, list) else [target]
         
-        if not worker:
-            logger.warning(f"⚠️【标签调度器】目标工人未初始化: {worker_attr}")
-            return
-        
-        # 转发标签给工人（单向发送，不等待）
-        try:
-            worker.on_data(tag_data)
-            logger.info(f"📤【标签调度器】标签已转发: {info} → {worker_attr}")
-        except Exception as e:
-            logger.error(f"❌【标签调度器】转发标签失败: {info} → {worker_attr}, 错误: {e}")
+        for worker_attr in target_list:
+            worker = getattr(self, worker_attr, None)
+            
+            if not worker:
+                logger.warning(f"⚠️【标签调度器】目标工人未初始化: {worker_attr}")
+                continue
+            
+            # 转发标签给工人（单向发送，不等待）
+            try:
+                worker.on_data(tag_data)
+                logger.info(f"📤【标签调度器】标签已转发: {info} → {worker_attr}")
+            except Exception as e:
+                logger.error(f"❌【标签调度器】转发标签失败: {info} → {worker_attr}, 错误: {e}")
     
-    def update_workers(self, open_worker=None, auto_sltp=None) -> None:
+    def update_workers(
+        self,
+        open_worker=None,
+        funding_sltp=None,
+        funding_close=None,
+        spread_sltp=None,
+        spread_close=None
+    ) -> None:
         """
         更新工人引用（用于工人重新创建后更新）
         """
@@ -114,29 +138,43 @@ class TagDispatcher:
             self.open_worker = open_worker
             logger.info(f"🔄【标签调度器】更新 open_worker")
         
-        if auto_sltp is not None:
-            self.auto_sltp = auto_sltp
-            logger.info(f"🔄【标签调度器】更新 auto_sltp")
+        if funding_sltp is not None:
+            self.funding_sltp = funding_sltp
+            logger.info(f"🔄【标签调度器】更新 funding_sltp")
+        
+        if funding_close is not None:
+            self.funding_close = funding_close
+            logger.info(f"🔄【标签调度器】更新 funding_close")
+        
+        if spread_sltp is not None:
+            self.spread_sltp = spread_sltp
+            logger.info(f"🔄【标签调度器】更新 spread_sltp")
+        
+        if spread_close is not None:
+            self.spread_close = spread_close
+            logger.info(f"🔄【标签调度器】更新 spread_close")
     
-    def add_route(self, tag: str, worker_attr: str) -> None:
+    def add_route(self, tag: str, target: Any) -> None:
         """
         动态添加标签路由
+        
+        参数:
+            tag: 标签内容，如 "欧易平仓成功"
+            target: 目标工人属性名，或属性名列表
         """
-        self._route_table[tag] = worker_attr
-        logger.info(f"➕【标签调度器】添加路由: {tag} → {worker_attr}")
+        self._route_table[tag] = target
+        logger.info(f"➕【标签调度器】添加路由: {tag} → {target}")
     
     def remove_route(self, tag: str) -> None:
         """
         动态移除标签路由
         """
         if tag in self._route_table:
-            worker_attr = self._route_table.pop(tag)
-            logger.info(f"➖【标签调度器】移除路由: {tag} → {worker_attr}")
+            target = self._route_table.pop(tag)
+            logger.info(f"➖【标签调度器】移除路由: {tag} → {target}")
     
-    def get_routes(self) -> Dict[str, str]:
+    def get_routes(self) -> Dict[str, Any]:
         """
         获取当前所有路由
-        返回:
-            路由表副本
         """
         return self._route_table.copy()
