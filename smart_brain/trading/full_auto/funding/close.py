@@ -1,6 +1,6 @@
 # trading/full_auto/funding/close.py
 """
-全自动清仓工人 - 持续监控，条件触发清仓
+资金费清仓工人 - 持续监控，条件触发清仓
 
 架构：
 - 步骤1-3（准备阶段）：拷贝模板、读数据、填充参数创建副本，只执行一次
@@ -72,7 +72,7 @@ class FundingClose:
         # 防重入标志
         self._is_closing = False
         
-        logger.info("🔚【全自动清仓工人】初始化完成")
+        logger.info("🔚【资金费清仓工人】初始化完成")
     
     # ==================== 标签控制 ====================
     
@@ -82,7 +82,7 @@ class FundingClose:
             return
         
         info = data["info"]
-        logger.debug(f"📥【全自动清仓工人】收到标签: {info}")
+        logger.debug(f"📥【资金费清仓工人】收到标签: {info}")
         
         if info == "开启全自动":
             self._activate()
@@ -97,11 +97,11 @@ class FundingClose:
         self.is_active = True
         self._stop_monitor_task()
         self.monitor_task = asyncio.create_task(self._monitor_loop())
-        logger.info("✅【全自动清仓工人】已激活，开始持续监控")
+        logger.info("✅【资金费清仓工人】已激活，开始持续监控")
     
     def _deactivate(self):
         """立刻停止所有工作，完全重置"""
-        logger.info("🛑【全自动清仓工人】收到结束全自动标签，立刻重置")
+        logger.info("🛑【资金费清仓工人】收到结束全自动标签，立刻重置")
         
         self.is_active = False
         self.funding_check_active = False
@@ -111,7 +111,7 @@ class FundingClose:
         self._cancel_delayed_close_task()
         
         self._full_cleanup()
-        logger.info("🛑【全自动清仓工人】已停用，状态完全重置")
+        logger.info("🛑【资金费清仓工人】已停用，状态完全重置")
     
     def _stop_monitor_task(self):
         """停止监控任务"""
@@ -135,7 +135,7 @@ class FundingClose:
     
     async def _monitor_loop(self):
         """持续监控循环"""
-        logger.info("🔄【全自动清仓工人】监控循环启动")
+        logger.info("🔄【资金费清仓工人】监控循环启动")
         
         while self.is_active:
             try:
@@ -155,7 +155,7 @@ class FundingClose:
                     # 步骤3：填充平仓参数，创建副本
                     has_position = self._fill_close_params(user_data)
                     if has_position:
-                        logger.info("📦【全自动清仓工人】准备阶段完成，副本已创建，进入监控阶段")
+                        logger.info("📦【资金费清仓工人】准备阶段完成，副本已创建，进入监控阶段")
                         break
                     
                     await asyncio.sleep(1)
@@ -183,22 +183,22 @@ class FundingClose:
                     
                     if triggered:
                         # 触发清仓，退出监控阶段，回到外层重新从准备阶段开始
-                        logger.info("🔄【全自动清仓工人】清仓已触发，返回准备阶段")
+                        logger.info("🔄【资金费清仓工人】清仓已触发，返回准备阶段")
                         await asyncio.sleep(10)
                         break
                     
                     await asyncio.sleep(1)
                 
             except asyncio.CancelledError:
-                logger.info("🛑【全自动清仓工人】监控循环被取消")
+                logger.info("🛑【资金费清仓工人】监控循环被取消")
                 break
             except Exception as e:
-                logger.error(f"❌【全自动清仓工人】监控循环异常: {e}")
+                logger.error(f"❌【资金费清仓工人】监控循环异常: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 await asyncio.sleep(1)
         
-        logger.info("🛑【全自动清仓工人】监控循环结束")
+        logger.info("🛑【资金费清仓工人】监控循环结束")
     
     def _reset_trigger_state(self):
         """重置防重复触发状态"""
@@ -231,7 +231,7 @@ class FundingClose:
             return market_data, user_data
             
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】读取数据失败: {e}")
+            logger.error(f"❌【资金费清仓工人】读取数据失败: {e}")
             return None, None
     
     # ==================== 步骤3：填充平仓参数 ====================
@@ -279,7 +279,7 @@ class FundingClose:
             
             # 创建副本
             self.okx_close_copy = copy.deepcopy(self.okx_close_cache)
-            logger.debug(f"📝【全自动清仓工人】欧易平仓参数已填充: {okx_inst_id}")
+            logger.debug(f"📝【资金费清仓工人】欧易平仓参数已填充: {okx_inst_id}")
         else:
             self.okx_close_copy = None
         
@@ -313,7 +313,7 @@ class FundingClose:
             
             # 创建副本
             self.binance_close_copy = copy.deepcopy(self.binance_close_cache)
-            logger.debug(f"📝【全自动清仓工人】币安平仓参数已填充: {binance_symbol}")
+            logger.debug(f"📝【资金费清仓工人】币安平仓参数已填充: {binance_symbol}")
         else:
             self.binance_close_copy = None
         
@@ -346,11 +346,11 @@ class FundingClose:
         
         if self.cached_okx_settle_time is not None and current_okx_time != self.cached_okx_settle_time:
             settle_changed = True
-            logger.info(f"📅【全自动清仓工人】欧易资金费结算时间更新")
+            logger.info(f"📅【资金费清仓工人】欧易资金费结算时间更新")
         
         if self.cached_binance_settle_time is not None and current_binance_time != self.cached_binance_settle_time:
             settle_changed = True
-            logger.info(f"📅【全自动清仓工人】币安资金费结算时间更新")
+            logger.info(f"📅【资金费清仓工人】币安资金费结算时间更新")
         
         # 更新缓存
         self.cached_okx_settle_time = current_okx_time
@@ -370,7 +370,7 @@ class FundingClose:
         self._cancel_funding_timer()
         self.funding_check_active = False
         self.funding_timer_task = asyncio.create_task(self._funding_delay_timer())
-        logger.info("⏰【全自动清仓工人】启动60秒倒计时，结束后开始公式检测")
+        logger.info("⏰【资金费清仓工人】启动60秒倒计时，结束后开始公式检测")
     
     async def _funding_delay_timer(self):
         """60秒倒计时，结束后开启公式检测"""
@@ -378,9 +378,9 @@ class FundingClose:
             await asyncio.sleep(60)
             if self.is_active:
                 self.funding_check_active = True
-                logger.info("✅【全自动清仓工人】60秒倒计时结束，开始公式检测")
+                logger.info("✅【资金费清仓工人】60秒倒计时结束，开始公式检测")
         except asyncio.CancelledError:
-            logger.info("🛑【全自动清仓工人】倒计时被取消")
+            logger.info("🛑【资金费清仓工人】倒计时被取消")
     
     # ==================== 新增：检测本小时是否结算 ====================
     
@@ -396,29 +396,29 @@ class FundingClose:
         - 第55分钟时若仍持仓，强制平仓，让位给第57分钟的侦察兵
         """
         if not self.current_symbol:
-            logger.debug("⏭️【全自动清仓工人】无持仓合约，跳过倒计时检测")
+            logger.debug("⏭️【资金费清仓工人】无持仓合约，跳过倒计时检测")
             return
         
         symbol_data = market_data.get(self.current_symbol)
         if not symbol_data:
-            logger.warning(f"⚠️【全自动清仓工人】未找到合约 {self.current_symbol} 的行情数据")
+            logger.warning(f"⚠️【资金费清仓工人】未找到合约 {self.current_symbol} 的行情数据")
             return
         
         try:
             okx_countdown = int(symbol_data.get('okx_countdown_seconds') or 0)
             binance_countdown = int(symbol_data.get('binance_countdown_seconds') or 0)
             
-            logger.info(f"🔍【全自动清仓工人】结算时间已更新，检测下次结算: 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
+            logger.info(f"🔍【资金费清仓工人】结算时间已更新，检测下次结算: 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
             
             # 任一倒计时 > 3610（约1小时），说明本小时不结算
             if okx_countdown > 3610 or binance_countdown > 3610:
-                logger.info(f"📅【全自动清仓工人】本小时不结算（倒计时 > 1小时），安排第55分钟平仓（最后闸门）")
+                logger.info(f"📅【资金费清仓工人】本小时不结算（倒计时 > 1小时），安排第55分钟平仓（最后闸门）")
                 self._schedule_close_at_minute_55()
             else:
-                logger.info(f"✅【全自动清仓工人】本小时会结算（倒计时 < 1小时），继续正常监控")
+                logger.info(f"✅【资金费清仓工人】本小时会结算（倒计时 < 1小时），继续正常监控")
                 
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】检测结算倒计时异常: {e}")
+            logger.error(f"❌【资金费清仓工人】检测结算倒计时异常: {e}")
     
     def _schedule_close_at_minute_55(self):
         """安排在本小时第55分钟执行平仓"""
@@ -439,25 +439,25 @@ class FundingClose:
             
             wait_seconds = (target_time - now).total_seconds()
             
-            logger.info(f"⏰【全自动清仓工人】安排延迟平仓: 目标时间={target_time.strftime('%Y-%m-%d %H:%M:%S')}, 等待 {wait_seconds:.0f} 秒")
+            logger.info(f"⏰【资金费清仓工人】安排延迟平仓: 目标时间={target_time.strftime('%Y-%m-%d %H:%M:%S')}, 等待 {wait_seconds:.0f} 秒")
             
             await asyncio.sleep(wait_seconds)
             
             if not self.is_active:
-                logger.info("🛑【全自动清仓工人】已停用，取消延迟平仓")
+                logger.info("🛑【资金费清仓工人】已停用，取消延迟平仓")
                 return
             
             # 检查是否仍有有效的平仓副本
             if self.okx_close_copy or self.binance_close_copy:
-                logger.warning(f"🔚【全自动清仓工人】执行延迟平仓（本小时第55分钟）- 最后闸门")
+                logger.warning(f"🔚【资金费清仓工人】执行延迟平仓（本小时第55分钟）- 最后闸门")
                 await self._execute_close("本小时不结算，第55分钟强制平仓")
             else:
-                logger.info("📭【全自动清仓工人】无持仓，取消延迟平仓")
+                logger.info("📭【资金费清仓工人】无持仓，取消延迟平仓")
                 
         except asyncio.CancelledError:
-            logger.info("🛑【全自动清仓工人】延迟平仓任务被取消")
+            logger.info("🛑【资金费清仓工人】延迟平仓任务被取消")
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】延迟平仓任务异常: {e}")
+            logger.error(f"❌【资金费清仓工人】延迟平仓任务异常: {e}")
     
     # ==================== 步骤5：检测清仓条件 ====================
     
@@ -536,7 +536,7 @@ class FundingClose:
             if self.last_orphan_type == 'okx':
                 return None  # 已触发过，不重复
             self.last_orphan_type = 'okx'
-            logger.warning(f"⚠️【全自动清仓工人】检测到欧易孤儿单")
+            logger.warning(f"⚠️【资金费清仓工人】检测到欧易孤儿单")
             return '欧易'
         
         # 币安孤儿单
@@ -544,7 +544,7 @@ class FundingClose:
             if self.last_orphan_type == 'binance':
                 return None
             self.last_orphan_type = 'binance'
-            logger.warning(f"⚠️【全自动清仓工人】检测到币安孤儿单")
+            logger.warning(f"⚠️【资金费清仓工人】检测到币安孤儿单")
             return '币安'
         
         # 不是孤儿单，重置状态
@@ -590,7 +590,7 @@ class FundingClose:
             if current_key == self.last_not_arbitrage_key:
                 return False
             self.last_not_arbitrage_key = current_key
-            logger.warning(f"⚠️【全自动清仓工人】方向相同: 欧易={okx_side}, 币安={binance_side}")
+            logger.warning(f"⚠️【资金费清仓工人】方向相同: 欧易={okx_side}, 币安={binance_side}")
             return True
         
         # 仓位价值差 > 100
@@ -599,7 +599,7 @@ class FundingClose:
             if current_key == self.last_not_arbitrage_key:
                 return False
             self.last_not_arbitrage_key = current_key
-            logger.warning(f"⚠️【全自动清仓工人】仓位价值差 > 100: {value_diff:.2f}")
+            logger.warning(f"⚠️【资金费清仓工人】仓位价值差 > 100: {value_diff:.2f}")
             return True
         
         # 条件不满足，重置标识
@@ -625,7 +625,7 @@ class FundingClose:
                 if current_key == self.last_dangerous_key:
                     return False
                 self.last_dangerous_key = current_key
-                logger.warning(f"⚠️【全自动清仓工人】欧易标记价涨跌盈亏幅 ≥ 36: {okx_mark:.2f}")
+                logger.warning(f"⚠️【资金费清仓工人】欧易标记价涨跌盈亏幅 ≥ 36: {okx_mark:.2f}")
                 return True
         
         if okx_last_val is not None:
@@ -634,7 +634,7 @@ class FundingClose:
                 if current_key == self.last_dangerous_key:
                     return False
                 self.last_dangerous_key = current_key
-                logger.warning(f"⚠️【全自动清仓工人】欧易最新价涨跌盈亏幅 ≥ 36: {okx_last:.2f}")
+                logger.warning(f"⚠️【资金费清仓工人】欧易最新价涨跌盈亏幅 ≥ 36: {okx_last:.2f}")
                 return True
         
         # 币安
@@ -644,7 +644,7 @@ class FundingClose:
                 if current_key == self.last_dangerous_key:
                     return False
                 self.last_dangerous_key = current_key
-                logger.warning(f"⚠️【全自动清仓工人】币安标记价涨跌盈亏幅 ≥ 36: {binance_mark:.2f}")
+                logger.warning(f"⚠️【资金费清仓工人】币安标记价涨跌盈亏幅 ≥ 36: {binance_mark:.2f}")
                 return True
         
         if binance_last_val is not None:
@@ -653,7 +653,7 @@ class FundingClose:
                 if current_key == self.last_dangerous_key:
                     return False
                 self.last_dangerous_key = current_key
-                logger.warning(f"⚠️【全自动清仓工人】币安最新价涨跌盈亏幅 ≥ 36: {binance_last:.2f}")
+                logger.warning(f"⚠️【资金费清仓工人】币安最新价涨跌盈亏幅 ≥ 36: {binance_last:.2f}")
                 return True
         
         # 条件不满足，重置标识
@@ -681,10 +681,10 @@ class FundingClose:
                 if self.last_rate_diff_triggered:
                     return False
                 self.last_rate_diff_triggered = True
-                logger.warning(f"⚠️【全自动清仓工人】费率差缩小: {self.current_symbol} rate_diff={rate_diff}")
+                logger.warning(f"⚠️【资金费清仓工人】费率差缩小: {self.current_symbol} rate_diff={rate_diff}")
                 return True
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】检查费率差异常: {e}")
+            logger.error(f"❌【资金费清仓工人】检查费率差异常: {e}")
         
         return False
     
@@ -727,20 +727,20 @@ class FundingClose:
             
             result = (okx_pnl + binance_pnl) * 100 / denominator
             
-            logger.debug(f"📊【全自动清仓工人】公式: 欧易浮盈={okx_pnl:.2f}, 币安浮盈={binance_pnl:.2f}, 分母={denominator:.2f}, 结果={result:.4f}")
+            logger.debug(f"📊【资金费清仓工人】公式: 欧易浮盈={okx_pnl:.2f}, 币安浮盈={binance_pnl:.2f}, 分母={denominator:.2f}, 结果={result:.4f}")
             
             if result >= 0.5:
-                logger.warning(f"⚠️【全自动清仓工人】公式结果 ≥ 0.5: {result:.4f}")
+                logger.warning(f"⚠️【资金费清仓工人】公式结果 ≥ 0.5: {result:.4f}")
                 return "profit"
             
             if result <= -0.2:
-                logger.warning(f"⚠️【全自动清仓工人】公式结果 ≤ -0.2: {result:.4f}")
+                logger.warning(f"⚠️【资金费清仓工人】公式结果 ≤ -0.2: {result:.4f}")
                 return "loss"
             
             return None
             
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】计算公式异常: {e}")
+            logger.error(f"❌【资金费清仓工人】计算公式异常: {e}")
             return None
     
     # ==================== 执行清仓 ====================
@@ -754,7 +754,7 @@ class FundingClose:
         
         try:
             logger.info("=" * 50)
-            logger.info(f"🔚【全自动清仓工人】触发清仓！原因: {reason}")
+            logger.info(f"🔚【资金费清仓工人】触发清仓！原因: {reason}")
             
             # 取消延迟平仓任务（因为已经要平仓了）
             self._cancel_delayed_close_task()
@@ -768,7 +768,7 @@ class FundingClose:
             
             if orders and self.brain.trader:
                 self.brain.trader.send_orders(orders)
-                logger.info(f"📤【全自动清仓工人】已推送 {len(orders)} 个平仓订单给下单工人")
+                logger.info(f"📤【资金费清仓工人】已推送 {len(orders)} 个平仓订单给下单工人")
             
             logger.info("=" * 50)
             
@@ -776,7 +776,7 @@ class FundingClose:
             self._cleanup_work()
             
         except Exception as e:
-            logger.error(f"❌【全自动清仓工人】执行清仓异常: {e}")
+            logger.error(f"❌【资金费清仓工人】执行清仓异常: {e}")
         finally:
             self._is_closing = False
     
@@ -792,7 +792,7 @@ class FundingClose:
         self.funding_check_active = False
         self._cancel_funding_timer()
         self._cancel_delayed_close_task()
-        logger.debug("🧹【全自动清仓工人】工作缓存已清空")
+        logger.debug("🧹【资金费清仓工人】工作缓存已清空")
     
     def _full_cleanup(self):
         """完全重置"""
@@ -808,4 +808,4 @@ class FundingClose:
         self._cancel_funding_timer()
         self._cancel_delayed_close_task()
         self._reset_trigger_state()
-        logger.info("🧹【全自动清仓工人】完全重置")
+        logger.info("🧹【资金费清仓工人】完全重置")

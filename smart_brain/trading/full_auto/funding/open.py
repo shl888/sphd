@@ -1,6 +1,6 @@
 # trading/full_auto/funding/open.py
 """
-全自动侦察兵 - 负责检测开仓条件，生成开仓指令
+资金费开仓工人 - 负责检测开仓条件，生成开仓指令
 
 工作流程：
 1. 收到标签 {"info": "开启全自动"} → 激活工作状态
@@ -63,7 +63,7 @@ class FundingOpen:
         # 缓存
         self.cached_template = None
         
-        logger.info("🔍【全自动侦察兵】初始化完成")
+        logger.info("🔍【资金费开仓工人】初始化完成")
     
     # ==================== 标签控制 ====================
     
@@ -75,10 +75,10 @@ class FundingOpen:
         info = data["info"]
         
         if info == "开启全自动":
-            logger.info("🏷️【全自动侦察兵】收到标签：开启全自动")
+            logger.info("🏷️【资金费开仓工人】收到标签：开启全自动")
             self._activate()
         elif info == "结束全自动":
-            logger.info("🏷️【全自动侦察兵】收到标签：结束全自动")
+            logger.info("🏷️【资金费开仓工人】收到标签：结束全自动")
             self._deactivate()
     
     def _activate(self):
@@ -87,7 +87,7 @@ class FundingOpen:
             return
         self.is_active = True
         self._start_scout_task()
-        logger.info("✅【全自动侦察兵】已激活，等待每小时第57分钟执行")
+        logger.info("✅【资金费开仓工人】已激活，等待每小时第57分钟执行")
     
     def _deactivate(self):
         """停用，立刻重置所有状态，取消正在执行的任务"""
@@ -99,10 +99,10 @@ class FundingOpen:
         # 取消正在执行的侦察任务
         if self.current_task and not self.current_task.done():
             self.current_task.cancel()
-            logger.info("🛑【全自动侦察兵】已取消正在执行的侦察任务")
+            logger.info("🛑【资金费开仓工人】已取消正在执行的侦察任务")
         
         self._cleanup()
-        logger.info("🛑【全自动侦察兵】已停用，状态已重置")
+        logger.info("🛑【资金费开仓工人】已停用，状态已重置")
     
     # ==================== 定时任务 ====================
     
@@ -126,7 +126,7 @@ class FundingOpen:
                 next_run = self._calculate_next_run(now)
                 wait_seconds = (next_run - now).total_seconds()
                 
-                logger.info(f"⏰【全自动侦察兵】下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}，等待 {wait_seconds:.0f} 秒")
+                logger.info(f"⏰【资金费开仓工人】下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}，等待 {wait_seconds:.0f} 秒")
                 
                 await asyncio.sleep(wait_seconds)
                 
@@ -138,14 +138,14 @@ class FundingOpen:
                 try:
                     await self.current_task
                 except asyncio.CancelledError:
-                    logger.info("🛑【全自动侦察兵】侦察任务被取消")
+                    logger.info("🛑【资金费开仓工人】侦察任务被取消")
                 finally:
                     self.current_task = None
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"❌【全自动侦察兵】侦察循环异常: {e}")
+                logger.error(f"❌【资金费开仓工人】侦察循环异常: {e}")
                 await asyncio.sleep(60)
     
     def _calculate_next_run(self, now: datetime) -> datetime:
@@ -175,31 +175,31 @@ class FundingOpen:
         
         for attempt in range(max_attempts):
             if not self.is_active:
-                logger.info("🛑【全自动侦察兵】收到结束标签，停止侦察")
+                logger.info("🛑【资金费开仓工人】收到结束标签，停止侦察")
                 return
             
             if attempt > 0:
-                logger.info(f"🔄【全自动侦察兵】第 {attempt + 1} 次尝试，{retry_delay} 秒后重新开始...")
+                logger.info(f"🔄【资金费开仓工人】第 {attempt + 1} 次尝试，{retry_delay} 秒后重新开始...")
                 await asyncio.sleep(retry_delay)
             
             logger.info("=" * 50)
-            logger.info(f"🔍【全自动侦察兵】开始侦察任务 (第 {attempt + 1}/{max_attempts} 次)")
+            logger.info(f"🔍【资金费开仓工人】开始侦察任务 (第 {attempt + 1}/{max_attempts} 次)")
             
             success, should_retry = await self._execute_scout_once()
             
             if success:
-                logger.info(f"✅【全自动侦察兵】侦察任务成功完成")
+                logger.info(f"✅【资金费开仓工人】侦察任务成功完成")
                 self._cleanup()
                 return
             
             if not should_retry:
-                logger.warning(f"📭【全自动侦察兵】侦察任务终止，不重试")
+                logger.warning(f"📭【资金费开仓工人】侦察任务终止，不重试")
                 self._cleanup()
                 return
             
-            logger.warning(f"⚠️【全自动侦察兵】第 {attempt + 1} 次侦察失败，将进行重试")
+            logger.warning(f"⚠️【资金费开仓工人】第 {attempt + 1} 次侦察失败，将进行重试")
         
-        logger.warning(f"📭【全自动侦察兵】已达最大重试次数 ({max_attempts})，结束本次侦察")
+        logger.warning(f"📭【资金费开仓工人】已达最大重试次数 ({max_attempts})，结束本次侦察")
         self._cleanup()
     
     async def _execute_scout_once(self) -> Tuple[bool, bool]:
@@ -217,29 +217,29 @@ class FundingOpen:
             # 步骤1：读取数据
             market_data, user_data = await self._fetch_both_data()
             if market_data is None or user_data is None:
-                logger.warning("📭【全自动侦察兵】数据读取失败")
+                logger.warning("📭【资金费开仓工人】数据读取失败")
                 return False, True
             
             # 步骤2：检查持仓
             if not self._check_position(user_data):
-                logger.warning("📭【全自动侦察兵】已有持仓，禁止开新仓")
+                logger.warning("📭【资金费开仓工人】已有持仓，禁止开新仓")
                 return False, True
             
             # 步骤3：检查资产（不重试，直接结束）
             if not self._check_asset(user_data):
-                logger.warning("📭【全自动侦察兵】资产检查不通过")
+                logger.warning("📭【资金费开仓工人】资产检查不通过")
                 return False, False
             
             # 步骤4：筛选交易标的
             selected_symbol = self._select_best_symbol(market_data)
             if selected_symbol is None:
-                logger.warning("📭【全自动侦察兵】无合适交易标的")
+                logger.warning("📭【资金费开仓工人】无合适交易标的")
                 return False, True
             
             # 步骤5：获取选中合约的数据
             symbol_data = market_data.get(selected_symbol)
             if symbol_data is None:
-                logger.error(f"❌【全自动侦察兵】选中合约 {selected_symbol} 数据为空")
+                logger.error(f"❌【资金费开仓工人】选中合约 {selected_symbol} 数据为空")
                 return False, True
             
             # 步骤6：决定方向
@@ -253,13 +253,13 @@ class FundingOpen:
             self.cached_template["params"]["margin"] = margin
             self.cached_template["params"]["direction"] = direction
             
-            logger.info(f"📋【全自动侦察兵】开仓指令已生成: symbol={selected_symbol}, margin={margin:.2f}, direction={direction}")
+            logger.info(f"📋【资金费开仓工人】开仓指令已生成: symbol={selected_symbol}, margin={margin:.2f}, direction={direction}")
             
         except asyncio.CancelledError:
-            logger.info("🛑【全自动侦察兵】侦察任务被取消")
+            logger.info("🛑【资金费开仓工人】侦察任务被取消")
             raise
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】侦察流程异常: {e}")
+            logger.error(f"❌【资金费开仓工人】侦察流程异常: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return False, True
@@ -286,20 +286,20 @@ class FundingOpen:
             user_ok = user_data and 'okx' in user_data and 'binance' in user_data
             
             if market_ok and user_ok:
-                logger.info(f"✅【全自动侦察兵】数据读取成功: 行情{len(market_data)}条, 私人数据正常")
+                logger.info(f"✅【资金费开仓工人】数据读取成功: 行情{len(market_data)}条, 私人数据正常")
                 return market_data, user_data
             
             if not market_ok:
-                logger.warning(f"⚠️【全自动侦察兵】行情数据读取不到或为空")
+                logger.warning(f"⚠️【资金费开仓工人】行情数据读取不到或为空")
             if not user_ok:
-                logger.warning(f"⚠️【全自动侦察兵】私人数据读取不到或不完整")
+                logger.warning(f"⚠️【资金费开仓工人】私人数据读取不到或不完整")
             
             return None, None
             
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】读取数据异常: {e}")
+            logger.error(f"❌【资金费开仓工人】读取数据异常: {e}")
             return None, None
     
     # ==================== 条件检测 ====================
@@ -313,13 +313,13 @@ class FundingOpen:
         binance_symbol = binance_data.get('开仓合约名', '')
         
         if okx_symbol:
-            logger.warning(f"⚠️【全自动侦察兵】欧易已有持仓: {okx_symbol}")
+            logger.warning(f"⚠️【资金费开仓工人】欧易已有持仓: {okx_symbol}")
             return False
         if binance_symbol:
-            logger.warning(f"⚠️【全自动侦察兵】币安已有持仓: {binance_symbol}")
+            logger.warning(f"⚠️【资金费开仓工人】币安已有持仓: {binance_symbol}")
             return False
         
-        logger.info("✅【全自动侦察兵】持仓检查通过，当前空仓")
+        logger.info("✅【资金费开仓工人】持仓检查通过，当前空仓")
         return True
     
     def _check_asset(self, user_data: Dict) -> bool:
@@ -332,17 +332,17 @@ class FundingOpen:
             binance_asset = float(binance_data.get('账户资产额', 0))
             
             if okx_asset < 50:
-                logger.warning(f"⚠️【全自动侦察兵】欧易资产不足50: {okx_asset:.2f}")
+                logger.warning(f"⚠️【资金费开仓工人】欧易资产不足50: {okx_asset:.2f}")
                 return False
             if binance_asset < 50:
-                logger.warning(f"⚠️【全自动侦察兵】币安资产不足50: {binance_asset:.2f}")
+                logger.warning(f"⚠️【资金费开仓工人】币安资产不足50: {binance_asset:.2f}")
                 return False
             
-            logger.info(f"✅【全自动侦察兵】资产检查通过: 欧易={okx_asset:.2f}, 币安={binance_asset:.2f}")
+            logger.info(f"✅【资金费开仓工人】资产检查通过: 欧易={okx_asset:.2f}, 币安={binance_asset:.2f}")
             return True
             
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】检查资产异常: {e}")
+            logger.error(f"❌【资金费开仓工人】检查资产异常: {e}")
             return False
     
     # ==================== 费率与价格比较（复用逻辑）====================
@@ -363,7 +363,7 @@ class FundingOpen:
             
             return okx_rate < binance_rate, okx_price < binance_price
         except Exception as e:
-            logger.error(f"⚠️【全自动侦察兵】获取费率与价格比较异常: {e}")
+            logger.error(f"⚠️【资金费开仓工人】获取费率与价格比较异常: {e}")
             return False, False
     
     def _check_direction_consistency(self, symbol_data: Dict) -> bool:
@@ -380,21 +380,21 @@ class FundingOpen:
             binance_price = float(symbol_data.get('binance_trade_price') or 0)
             
             if okx_price == 0 or binance_price == 0:
-                logger.warning(f"⚠️【全自动侦察兵】价格数据缺失，无法判断方向一致性")
+                logger.warning(f"⚠️【资金费开仓工人】价格数据缺失，无法判断方向一致性")
                 return False
             
             # 方向一致 = 费率低的那边价格也低
             is_consistent = (okx_rate_lower == okx_price_lower)
             
             if is_consistent:
-                logger.info(f"✅ 【全自动侦察兵】方向一致: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
+                logger.info(f"✅ 【资金费开仓工人】方向一致: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
             else:
-                logger.info(f"❌ 【全自动侦察兵】方向冲突: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
+                logger.info(f"❌ 【资金费开仓工人】方向冲突: 欧易费率{'低' if okx_rate_lower else '高'}, 欧易价格{'低' if okx_price_lower else '高'}")
             
             return is_consistent
             
         except Exception as e:
-            logger.error(f"⚠️【全自动侦察兵】检查方向一致性异常: {e}")
+            logger.error(f"⚠️【资金费开仓工人】检查方向一致性异常: {e}")
             return False
     
     def _select_best_symbol(self, market_data: Dict) -> Optional[str]:
@@ -427,27 +427,27 @@ class FundingOpen:
                 
                 # 条件1：费率差检查
                 if rate_diff < 0.3:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 费率差不足: {rate_diff} < 0.3")
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 费率差不足: {rate_diff} < 0.3")
                     continue
                 
                 # 条件2：价差检查（新增）
                 if price_diff_percent > 5:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 价差过大: {price_diff_percent}% > 5%")
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 价差过大: {price_diff_percent}% > 5%")
                     continue
                 
                 # 条件3：欧易倒计时检查
                 if okx_countdown >= 200:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 欧易倒计时过长: {okx_countdown} >= 200")
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 欧易倒计时过长: {okx_countdown} >= 200")
                     continue
                 
                 # 条件4：币安倒计时检查
                 if binance_countdown >= 200:
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 币安倒计时过长: {binance_countdown} >= 200")
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 币安倒计时过长: {binance_countdown} >= 200")
                     continue
                 
                 # 条件5：方向一致性检查
                 if not self._check_direction_consistency(data):
-                    logger.debug(f"⏭️【全自动侦察兵】{symbol} 方向不一致，跳过")
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 方向不一致，跳过")
                     continue
                 
                 # 满足所有条件的合约
@@ -458,24 +458,24 @@ class FundingOpen:
                     'binance_countdown': binance_countdown
                 })
                 
-                logger.info(f"✅【全自动侦察兵】符合条件的合约: {symbol}, rate_diff={rate_diff}, price_diff={price_diff_percent}%, 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
+                logger.info(f"✅【资金费开仓工人】符合条件的合约: {symbol}, rate_diff={rate_diff}, price_diff={price_diff_percent}%, 欧易倒计时={okx_countdown}秒, 币安倒计时={binance_countdown}秒")
                 
             except Exception as e:
-                logger.debug(f"⚠️【全自动侦察兵】解析合约 {symbol} 数据异常: {e}")
+                logger.debug(f"⚠️【资金费开仓工人】解析合约 {symbol} 数据异常: {e}")
                 continue
         
         if not candidates:
-            logger.warning("⚠️【全自动侦察兵】未找到同时满足五个条件的合约")
+            logger.warning("⚠️【资金费开仓工人】未找到同时满足五个条件的合约")
             return None
         
         # 精选规则
         if len(candidates) == 1:
             best = candidates[0]
-            logger.info(f"🎯【全自动侦察兵】仅1个符合条件的合约，直接选中: {best['symbol']}")
+            logger.info(f"🎯【资金费开仓工人】仅1个符合条件的合约，直接选中: {best['symbol']}")
         else:
             # 选择费率差最大的
             best = max(candidates, key=lambda x: x['rate_diff'])
-            logger.info(f"🎯【全自动侦察兵】共{len(candidates)}个合约符合条件，选费率差最大的: {best['symbol']} (rate_diff={best['rate_diff']})")
+            logger.info(f"🎯【资金费开仓工人】共{len(candidates)}个合约符合条件，选费率差最大的: {best['symbol']} (rate_diff={best['rate_diff']})")
         
         return best['symbol']
     
@@ -489,17 +489,17 @@ class FundingOpen:
             okx_rate = float(symbol_data.get('okx_funding_rate') or 0)
             binance_rate = float(symbol_data.get('binance_funding_rate') or 0)
             
-            logger.info(f"📊【全自动侦察兵】资金费率: 欧易={okx_rate}, 币安={binance_rate}")
+            logger.info(f"📊【资金费开仓工人】资金费率: 欧易={okx_rate}, 币安={binance_rate}")
             
             if okx_rate_lower:
-                logger.info(f"📈【全自动侦察兵】方向: 欧易做多，币安做空")
+                logger.info(f"📈【资金费开仓工人】方向: 欧易做多，币安做空")
                 return "long_okx_short_binance"
             else:
-                logger.info(f"📉【全自动侦察兵】方向: 币安做多，欧易做空")
+                logger.info(f"📉【资金费开仓工人】方向: 币安做多，欧易做空")
                 return "long_binance_short_okx"
                 
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】决定方向异常: {e}，默认使用 long_okx_short_binance")
+            logger.error(f"❌【资金费开仓工人】决定方向异常: {e}，默认使用 long_okx_short_binance")
             return "long_okx_short_binance"
     
     def _calculate_margin(self, user_data: Dict) -> float:
@@ -514,11 +514,11 @@ class FundingOpen:
             smaller = min(okx_asset, binance_asset)
             margin = smaller * 0.1
             
-            logger.info(f"💰【全自动侦察兵】保证金计算: 较小资产={smaller:.2f}, margin={margin:.2f}")
+            logger.info(f"💰【资金费开仓工人】保证金计算: 较小资产={smaller:.2f}, margin={margin:.2f}")
             return margin
             
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】计算保证金异常: {e}")
+            logger.error(f"❌【资金费开仓工人】计算保证金异常: {e}")
             return 10.0
     
     # ==================== 发送指令 ====================
@@ -526,20 +526,20 @@ class FundingOpen:
     async def _send_to_brain(self):
         """把开仓指令发给大脑"""
         if self.cached_template is None:
-            logger.error("❌【全自动侦察兵】没有缓存的指令")
+            logger.error("❌【资金费开仓工人】没有缓存的指令")
             return
         
         instruction = copy.deepcopy(self.cached_template)
         
         try:
             await self.brain.handle_frontend_command(instruction)
-            logger.info(f"📤【全自动侦察兵】开仓指令已发送给大脑")
+            logger.info(f"📤【资金费开仓工人】开仓指令已发送给大脑")
         except Exception as e:
-            logger.error(f"❌【全自动侦察兵】发送指令给大脑失败: {e}")
+            logger.error(f"❌【资金费开仓工人】发送指令给大脑失败: {e}")
     
     # ==================== 清理 ====================
     
     def _cleanup(self):
         """清理缓存"""
         self.cached_template = None
-        logger.debug("🧹【全自动侦察兵】缓存已清空")
+        logger.debug("🧹【资金费开仓工人】缓存已清空")
