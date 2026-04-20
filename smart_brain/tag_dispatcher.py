@@ -1,4 +1,3 @@
-# smart_brain/tag_dispatcher.py
 """
 标签调度器 - 专门负责标签的接收与转发
 
@@ -60,6 +59,11 @@ class TagDispatcher:
             # 开仓成功 → 全自动止损止盈工人
             "欧易开仓成功": "auto_sltp",
             "币安开仓成功": "auto_sltp",
+            
+            # ========== 🆕 新增：策略标签（暂时只接收，不转发） ==========
+            # 等价差策略的平仓文件写好后，再配置转发目标
+            "当前策略:资金费套利": None,
+            "当前策略:价差套利": None,
         }
     
     async def receive(self, tag_data: Dict[str, Any]) -> None:
@@ -78,7 +82,13 @@ class TagDispatcher:
         # 查找路由
         worker_attr = self._route_table.get(info)
         
-        if not worker_attr:
+        if worker_attr is None:
+            # 路由表中明确配置为 None，表示暂时不转发
+            logger.info(f"📭【标签调度器】收到标签但暂不转发: {info}")
+            return
+        
+        if worker_attr == "":
+            # 未配置路由
             logger.warning(f"⚠️【标签调度器】未知标签: {info}")
             return
         
@@ -99,10 +109,6 @@ class TagDispatcher:
     def update_workers(self, open_worker=None, auto_sltp=None) -> None:
         """
         更新工人引用（用于工人重新创建后更新）
-        
-        参数:
-            open_worker: 半自动开仓工人
-            auto_sltp: 全自动止损止盈工人
         """
         if open_worker is not None:
             self.open_worker = open_worker
@@ -115,10 +121,6 @@ class TagDispatcher:
     def add_route(self, tag: str, worker_attr: str) -> None:
         """
         动态添加标签路由
-        
-        参数:
-            tag: 标签内容，如 "欧易平仓成功"
-            worker_attr: 目标工人属性名，如 "close_worker"
         """
         self._route_table[tag] = worker_attr
         logger.info(f"➕【标签调度器】添加路由: {tag} → {worker_attr}")
@@ -126,9 +128,6 @@ class TagDispatcher:
     def remove_route(self, tag: str) -> None:
         """
         动态移除标签路由
-        
-        参数:
-            tag: 标签内容
         """
         if tag in self._route_table:
             worker_attr = self._route_table.pop(tag)
@@ -137,7 +136,6 @@ class TagDispatcher:
     def get_routes(self) -> Dict[str, str]:
         """
         获取当前所有路由
-        
         返回:
             路由表副本
         """
