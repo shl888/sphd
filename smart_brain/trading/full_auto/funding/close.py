@@ -28,7 +28,7 @@ import copy
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
-from ..templates import CLOSE_POSITION_OKX, CLOSE_POSITION_BINANCE
+from ...templates import CLOSE_POSITION_OKX, CLOSE_POSITION_BINANCE
 
 logger = logging.getLogger(__name__)
 

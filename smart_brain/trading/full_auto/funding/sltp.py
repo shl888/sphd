@@ -25,7 +25,7 @@ import asyncio
 import logging
 from typing import Dict, Any
 
-from ..templates import OCO_OKX, OCO_BINANCE
+from ...templates import OCO_OKX, OCO_BINANCE
 
 logger = logging.getLogger(__name__)
 
