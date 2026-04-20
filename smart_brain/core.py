@@ -229,7 +229,7 @@ class SmartBrain:
             self.trade_mode = new_mode
             
             # 切换到全自动模式：发送「开启全自动」标签
-            if new_mode == '全自動' and old_mode != '全自動':
+            if new_mode == '全自动' and old_mode != '全自动':
                 # 资金费套利工人
                 if self.funding_open:
                     self.funding_open.on_data({"info": "开启全自动"})
@@ -248,7 +248,7 @@ class SmartBrain:
                 logger.info("🎮【智能大脑】已向全自动工人发送「开启全自动」标签")
             
             # 从全自动切换到其他模式：发送「结束全自动」标签
-            elif old_mode == '全自動' and new_mode != '全自動':
+            elif old_mode == '全自动' and new_mode != '全自动':
                 # 资金费套利工人
                 if self.funding_open:
                     self.funding_open.on_data({"info": "结束全自动"})
@@ -405,7 +405,7 @@ class SmartBrain:
         
         try:
             # 1. 如果当前是全自动模式，先发送结束标签
-            if self.trade_mode == '全自動':
+            if self.trade_mode == '全自动':
                 # 资金费套利工人
                 if self.funding_open:
                     self.funding_open.on_data({"info": "结束全自动"})
