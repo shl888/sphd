@@ -71,8 +71,8 @@ class TagDispatcher:
             "币安杠杆设置成功": "open_worker",
             
             # 开仓成功 → 两套策略的止损止盈工人（广播）
-            "欧易开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
-            "币安开仓成功": ["funding_sltp"],  # spread_sltp 暂未实现，先只发 funding
+            "欧易开仓成功": ["funding_sltp","spread_sltp"],  
+            "币安开仓成功": ["funding_sltp","spread_sltp"],  
             
             # ========== 策略标签（广播给两套策略的止损止盈和清仓工人） ==========
             # 等价差工人实现后，把注释去掉
