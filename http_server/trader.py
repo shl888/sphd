@@ -310,7 +310,7 @@ class Trader:
             
             orders = pending.get('data', [])
             if not orders:
-                logger.debug("🧹【下单工人】欧易无残留止损单")
+                logger.info("🧹【下单工人】欧易无残留止损单")
                 return
             
             # ========== 2. 提取 instId 和 algoId ==========
@@ -357,7 +357,7 @@ class Trader:
             )
             
             if not isinstance(open_orders, list) or len(open_orders) == 0:
-                logger.debug("🧹【下单工人】币安无残留条件单")
+                logger.info("🧹【下单工人】币安无残留条件单")
                 return
             
             # ========== 2. 提取所有不重复的合约名 ==========
