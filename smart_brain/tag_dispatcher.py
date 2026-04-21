@@ -76,8 +76,8 @@ class TagDispatcher:
             
             # ========== 策略标签（广播给两套策略的止损止盈和清仓工人） ==========
             # 等价差工人实现后，把注释去掉
-            "当前策略:资金费套利": ["funding_sltp", "funding_close"],  # + "spread_sltp", "spread_close"
-            "当前策略:价差套利": ["funding_sltp", "funding_close"],    # + "spread_sltp", "spread_close"
+            "当前策略:资金费套利": ["funding_sltp", "funding_close"],
+#            "当前策略:价差套利": ["spread_sltp",     "spread_close"],
         }
     
     async def receive(self, tag_data: Dict[str, Any]) -> None:
