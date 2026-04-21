@@ -253,55 +253,119 @@ class Trader:
     async def _cleanup_okx_algo_orders(self, creds: Dict):
         """清理欧易残留的止盈止损单"""
         try:
-            # 1. 查询所有未完成的策略委托
-            pending = await self._okx_http_request(
-                creds.get("api_key"),
-                creds.get("api_secret"),
-                creds.get("passphrase", ""),
-                "GET",
-                "/api/v5/trade/orders-algo-pending",
-                {"instType": "SWAP"}
-            )
+            api_key = creds.get("api_key")
+            api_secret = creds.get("api_secret")
+            passphrase = creds.get("passphrase", "")
+            
+            # ========== 1. 查询未完成的策略委托（GET） ==========
+            timestamp = self._okx_get_timestamp()
+            endpoint = "/api/v5/trade/orders-algo-pending"
+            params = {"ordType": "conditional,oco"}  # 止盈止损 + OCO
+            
+            # 拼查询参数
+            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            full_endpoint = f"{endpoint}?{query_string}"
+            
+            # GET 签名：timestamp + GET + full_endpoint（body为空）
+            sign_str = timestamp + "GET" + full_endpoint
+            signature = base64.b64encode(
+                hmac.new(api_secret.encode(), sign_str.encode(), hashlib.sha256).digest()
+            ).decode()
+            
+            url = self._okx_get_base_url() + full_endpoint
+            headers = {
+                "OK-ACCESS-KEY": api_key,
+                "OK-ACCESS-SIGN": signature,
+                "OK-ACCESS-TIMESTAMP": timestamp,
+                "OK-ACCESS-PASSPHRASE": passphrase,
+                "x-simulated-trading": self._okx_get_simulated_header()
+            }
+            
+            loop = asyncio.get_running_loop()
+            
+            def _get_request():
+                import requests
+                return requests.get(url, headers=headers)
+            
+            response = await loop.run_in_executor(self._executor, _get_request)
+            pending = response.json()
+            
+            if pending.get('code') != '0':
+                logger.warning(f"⚠️【下单工人】欧易查询策略委托失败: {pending}")
+                return
             
             orders = pending.get('data', [])
             if not orders:
                 logger.info("🧹【下单工人】欧易无残留止损单")
                 return
             
-            # 2. 提取所有 algoId
-            algo_ids = [order['algoId'] for order in orders if order.get('algoId')]
+            # ========== 2. 提取 instId 和 algoId ==========
+            cancel_list = []
+            for order in orders:
+                inst_id = order.get('instId')
+                algo_id = order.get('algoId')
+                if inst_id and algo_id:
+                    cancel_list.append({"instId": inst_id, "algoId": algo_id})
             
-            if not algo_ids:
+            if not cancel_list:
                 return
             
-            # 3. 批量撤销
-            await self._okx_http_request(
-                creds.get("api_key"),
-                creds.get("api_secret"),
-                creds.get("passphrase", ""),
-                "POST",
-                "/api/v5/trade/cancel-advance-algos",
-                {"algoIds": algo_ids}
-            )
-            
-            logger.info(f"🧹【下单工人】欧易已清理 {len(algo_ids)} 个残留止损单")
-            
+            # ========== 3. 批量撤销（POST，每次最多10个） ==========
+            batch_size = 10
+            for i in range(0, len(cancel_list), batch_size):
+                batch = cancel_list[i:i+batch_size]
+                result = await self._okx_http_request(
+                    api_key, api_secret, passphrase,
+                    "POST",
+                    "/api/v5/trade/cancel-algos",
+                    batch
+                )
+                if result.get('code') == '0':
+                    logger.info(f"🧹【下单工人】欧易已清理 {len(batch)} 个残留止损单")
+                else:
+                    logger.warning(f"⚠️【下单工人】欧易撤销失败: {result}")
+                    
         except Exception as e:
             logger.warning(f"⚠️【下单工人】欧易清理残留单失败（可忽略）: {e}")
     
     async def _cleanup_binance_open_orders(self, creds: Dict):
         """清理币安残留的条件单"""
         try:
-            # 币安全清所有条件单（当前空仓，所有条件单都是残留的）
-            await self._binance_http_request(
-                creds.get("api_key"),
-                creds.get("api_secret"),
-                "DELETE",
-                "/fapi/v1/allOpenOrders",
+            api_key = creds.get("api_key")
+            api_secret = creds.get("api_secret")
+            
+            # ========== 1. 查询所有未成交订单 ==========
+            open_orders = await self._binance_http_request(
+                api_key, api_secret,
+                "GET",
+                "/fapi/v1/openOrders",
                 {}
             )
-            logger.info("🧹【下单工人】币安已清理残留条件单")
             
+            if not isinstance(open_orders, list) or len(open_orders) == 0:
+                logger.info("🧹【下单工人】币安无残留条件单")
+                return
+            
+            # ========== 2. 提取所有不重复的合约名 ==========
+            symbols = set()
+            for order in open_orders:
+                symbol = order.get('symbol')
+                if symbol:
+                    symbols.add(symbol)
+            
+            if not symbols:
+                return
+            
+            # ========== 3. 逐个合约撤销所有条件单 ==========
+            for symbol in symbols:
+                await self._binance_http_request(
+                    api_key, api_secret,
+                    "DELETE",
+                    "/fapi/v1/allOpenOrders",
+                    {"symbol": symbol}
+                )
+                logger.info(f"🧹【下单工人】币安已清理 {symbol} 残留条件单")
+                
         except Exception as e:
             logger.warning(f"⚠️【下单工人】币安清理残留单失败（可忽略）: {e}")
     
@@ -627,8 +691,6 @@ class Trader:
             import requests
             if method == "POST":
                 return requests.post(url, data=body, headers=headers)
-            elif method == "GET":
-                return requests.get(url, params=params, headers=headers)
             else:
                 return requests.request(method, url, params=params, headers=headers)
         
