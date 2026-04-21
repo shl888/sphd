@@ -18,7 +18,7 @@
 
 合约筛选条件（必须同时满足）：
 - 费率差 >= 0.8
-- 价差 <= 5%
+- 价差 <= 3%
 - 欧易结算倒计时 < 200秒
 - 币安结算倒计时 < 200秒
 - 方向一致性：费率低的交易所，价格也必须低
@@ -403,7 +403,7 @@ class FundingOpen:
         
         条件（必须同时满足）：
         1. 费率差 >= 0.8
-        2. 价差 <= 5%
+        2. 价差 <= 3%
         3. 欧易结算倒计时 < 200秒
         4. 币安结算倒计时 < 200秒
         5. 方向一致性：费率低的交易所，价格也必须低
@@ -431,8 +431,8 @@ class FundingOpen:
                     continue
                 
                 # 条件2：价差检查（新增）
-                if price_diff_percent > 5:
-                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 价差过大: {price_diff_percent}% > 5%")
+                if price_diff_percent > 3:
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 价差过大: {price_diff_percent}% > 3%")
                     continue
                 
                 # 条件3：欧易倒计时检查
