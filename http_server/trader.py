@@ -93,7 +93,7 @@ class Trader:
         while self._running:
             try:
                 orders = await self._order_queue.get()
-                asyncio.create_task(self._process_orders(orders))
+                await self._process_orders(orders)
             except asyncio.CancelledError:
                 break
             except Exception as e:
