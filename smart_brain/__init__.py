@@ -5,7 +5,7 @@
 from .core import SmartBrain
 from .data_manager import DataManager
 from .tag_dispatcher import TagDispatcher
-from .config_handler import Confighandler
+from .config_handler import ConfigHandler
 
 # 注意：command_router 已删除，不再导入
 
