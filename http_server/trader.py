@@ -348,38 +348,56 @@ class Trader:
             api_key = creds.get("api_key")
             api_secret = creds.get("api_secret")
             
-            # ========== 1. 查询所有未成交的条件单 ==========
+            # 1. 查询所有未触发的条件单
             open_orders = await self._binance_http_request(
                 api_key, api_secret,
                 "GET",
-                "/fapi/v1/conditional/openOrders",
+                "/sapi/v1/algo/futures/openOrders",
                 {}
             )
             
-            if not isinstance(open_orders, list) or len(open_orders) == 0:
+            # 币安返回格式：{"code": 200, "msg": "", "data": [...]}
+            # 需要提取 data 字段
+            if isinstance(open_orders, dict):
+                if open_orders.get("code") != 200:
+                    logger.warning(f"⚠️【下单工人】币安查询条件单失败: {open_orders}")
+                    return
+                orders_data = open_orders.get("data", [])
+            else:
+                orders_data = open_orders if isinstance(open_orders, list) else []
+            
+            if not orders_data:
                 logger.info("🧹【下单工人】币安无残留条件单")
                 return
             
-            # ========== 2. 提取所有不重复的合约名 ==========
-            symbols = set()
-            for order in open_orders:
-                symbol = order.get('symbol')
-                if symbol:
-                    symbols.add(symbol)
+            # 2. 提取需要撤销的 algoId（按 symbol 去重，每个合约只保留一个）
+            seen_symbols = set()
+            algo_ids_to_cancel = []
             
-            if not symbols:
+            for order in orders_data:
+                symbol = order.get('symbol')
+                algo_id = order.get('algoId')
+                if symbol and algo_id and symbol not in seen_symbols:
+                    seen_symbols.add(symbol)
+                    algo_ids_to_cancel.append(algo_id)
+            
+            if not algo_ids_to_cancel:
                 return
             
-            # ========== 3. 逐个合约撤销所有条件单 ==========
-            for symbol in symbols:
-                await self._binance_http_request(
+            # 3. 逐个撤销
+            for algo_id in algo_ids_to_cancel:
+                result = await self._binance_http_request(
                     api_key, api_secret,
                     "DELETE",
-                    "/fapi/v1/allOpenOrders",
-                    {"symbol": symbol}
+                    "/sapi/v1/algo/futures/order",
+                    {"algoId": algo_id}
                 )
-                logger.info(f"🧹【下单工人】币安已清理 {symbol} 残留条件单")
-                
+                # 检查撤销结果
+                if isinstance(result, dict) and result.get("code") == 200:
+                    logger.info(f"🧹【下单工人】币安已清理 algoId: {algo_id} 的条件单")
+                else:
+                    logger.warning(f"⚠️【下单工人】币安撤销失败 algoId: {algo_id}, 响应: {result}")
+            
         except Exception as e:
             logger.warning(f"⚠️【下单工人】币安清理残留单失败（可忽略）: {e}")
     
