@@ -108,7 +108,7 @@ class SmartBrain:
             from . import set_config_handler
             config_handler = ConfigHandler(self.data_manager)
             set_config_handler(config_handler)  # 设置全局实例，供 qd_server 获取
-            config_handler.load_all()
+            config_handler.load_credentials()
             logger.info("✅【智能大脑】配置加载器已初始化")
             
             # 1. 初始化HTTP模块服务
