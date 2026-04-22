@@ -43,7 +43,7 @@
 MongoDB Atlas数据库
 
 【重要变化 - 从Turso迁移到MongoDB】
-1. 环境变量从 TURSO_DATABASE_URL/TOKEN 改为 MONGODB_URI
+1. 通过全局大脑实例获取 data_manager，再从 data_manager 获取数据库连接字符串
 2. 连接方式从 aiohttp + SQL 改为 pymongo + run_in_executor
 3. 不再需要SQL语句，直接操作Python字典
 4. 数据格式完全不变，字段名、字段值原样存储
@@ -51,7 +51,6 @@ MongoDB Atlas数据库
 ==================================================
 """
 
-import os
 import asyncio
 import logging
 import time
@@ -101,18 +100,39 @@ class Database:
     def __init__(self):
         """
         初始化数据库连接
-        【MongoDB】从环境变量读取连接字符串
+        通过全局大脑实例获取 data_manager，再从 data_manager 获取数据库连接字符串
         """
-        # ----- 第1步：从环境变量读取配置 -----
-        self.mongo_uri = os.getenv('MONGODB_URI')
+        # ----- 第1步：获取全局大脑实例 -----
+        try:
+            from smart_brain import get_brain_instance
+            brain = get_brain_instance()
+            if brain is None:
+                raise ValueError(
+                    "❌ 【数据库】大脑实例尚未初始化\n"
+                    "请确保在创建 Database 之前已调用 set_brain_instance()"
+                )
+            
+            data_manager = brain.data_manager
+            self.mongo_uri = data_manager.get_database_config('mongodb_uri')
+            logger.debug("✅ 【数据库】从 data_manager 获取 MongoDB 配置")
+            
+        except ImportError as e:
+            raise ImportError(
+                f"❌ 【数据库】无法导入 smart_brain 模块: {e}\n"
+                "请确保 smart_brain 模块在 Python 路径中"
+            )
+        except AttributeError as e:
+            raise AttributeError(
+                f"❌ 【数据库】大脑实例结构异常: {e}\n"
+                "请确保 brain.data_manager 已正确初始化"
+            )
         
         # ----- 第2步：验证配置是否存在 -----
         if not self.mongo_uri:
             raise ValueError(
-                "❌ 【数据库】环境变量 MONGODB_URI 必须设置\n"
-                "请设置:\n"
-                "  export MONGODB_URI=mongodb+srv://用户名:密码@集群地址.mongodb.net/\n"
-                "注意：密码中的特殊字符需要URL编码，@ 换成 %40，: 换成 %3A"
+                "❌ 【数据库】MongoDB 连接信息未配置\n"
+                "请确保 data_manager 中已存入 mongodb_uri\n"
+                "调用方式: data_manager.set_database_config('mongodb_uri', '你的连接字符串')"
             )
         
         logger.info("✅ 【数据库】MongoDB配置加载成功")
