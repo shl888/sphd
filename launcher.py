@@ -257,15 +257,6 @@ async def main():
     module_threads = []  # 保存所有模块线程（仅多线程模式用）
     
     try:
-        # ==================== 验证环境变量 ====================
-        required_vars = ['BINANCE_API_KEY', 'BINANCE_API_SECRET', 
-                        'OKX_API_KEY', 'OKX_API_SECRET']
-        missing_vars = [var for var in required_vars if not os.getenv(var)]
-        if missing_vars:
-            logger.warning(f"⚠️ 以下环境变量未设置: {missing_vars}")
-        else:
-            logger.info("✅ 所有环境变量已就绪")
-        
         # ==================== 1. 创建大脑实例 ====================
         logger.info("【1️⃣】创建大脑实例...")
         brain = SmartBrain(
