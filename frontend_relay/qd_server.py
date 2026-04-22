@@ -199,17 +199,16 @@ class FrontendRelayServer:
                                                 self.stats["commands_processed"] += 1
                                             
                                             elif msg_type == 'config':
-                                                password = data2.get('data', '')
-                                                logger.info(f"🔐【客户端】收到配置指令，客户端: {client_id}")
+                                                logger.info(f"💾【客户端】收到配置指令，转发给 ConfigHandler")
+                                                logger.debug(f"   客户端: {client_id}")
                                                 
                                                 try:
-                                                    from smart_brain import get_config_loader
-                                                    config_loader = get_config_loader()
-                                                    if config_loader:
-                                                        config_loader.set_decryption_password(password)
-                                                        logger.info(f"✅【客户端】配置指令已转发给 ConfigLoader")
+                                                    from smart_brain import get_config_handler
+                                                    config_handler = get_config_handler()
+                                                    if config_handler:
+                                                        config_handler.set_config(data2.get('data', ''))
                                                     else:
-                                                        logger.error(f"❌【客户端】ConfigLoader 实例未初始化")
+                                                        logger.error(f"❌【客户端】ConfigHandler 实例未初始化")
                                                 except Exception as e:
                                                     logger.error(f"❌【客户端】转发配置指令失败: {e}")
                                             
@@ -678,3 +677,4 @@ class FrontendRelayServer:
             "uptime_seconds": uptime,
             "auth_enabled": True
         }
+        
