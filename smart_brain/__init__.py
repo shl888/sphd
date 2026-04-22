@@ -18,6 +18,10 @@ def set_brain_instance(brain):
     # 可选：打印确认日志
     print("✅ [智能大脑] 全局brain实例已设置")
 
+def get_brain_instance():
+    """供其他模块获取brain实例"""
+    return _brain_instance
+
 def receive_private_data(data):
     """
     供外部模块直接调用 - 转发给brain实例
@@ -35,6 +39,7 @@ __all__ = [
     'DataManager',
     'TagDispatcher',
     'set_brain_instance',
+    'get_brain_instance',
     'receive_private_data',
 ]
 __version__ = '2.0.0'
