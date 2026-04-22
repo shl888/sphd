@@ -36,7 +36,7 @@ receiver推送的存储区快照，永远只有1份（覆盖更新）
 
 【数据库迁移 - 从Turso到MongoDB】
 2026-03-20 修改：将数据库查询从Turso改为MongoDB
-- 环境变量从 TURSO_DATABASE_URL/TOKEN 改为 MONGODB_URI
+- 通过全局大脑实例获取 data_manager，再从 data_manager 获取数据库连接字符串
 - 查询方式从 SQL 改为直接字典查询
 - 连接方式从 aiohttp 改为 pymongo（按需连接，用完即弃）
 - 结果处理从 _row_to_dict() 转换改为直接使用（MongoDB返回就是字典）
@@ -45,13 +45,12 @@ receiver推送的存储区快照，永远只有1份（覆盖更新）
 ==================================================
 """
 
-import os
 import logging
 import asyncio
 import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from pymongo import MongoClient  # ✅ 新增MongoDB驱动
+from pymongo import MongoClient
 
 # 导入常量 - 使用修正后的常量名
 from ...constants import (
@@ -76,14 +75,14 @@ from ...constants import (
     FIELD_LATEST_PRICE,
     FIELD_LATEST_POSITION_VALUE,
     FIELD_LATEST_MARGIN,
-    FIELD_MARK_PNL_PERCENT,              # 标记价涨跌盈亏幅
-    FIELD_LATEST_PNL_PERCENT,            # 最新价涨跌盈亏幅
+    FIELD_MARK_PNL_PERCENT,
+    FIELD_LATEST_PNL_PERCENT,
     FIELD_CLOSE_TIME,
-    FIELD_CLOSE_PRICE,                    # 平仓价
-    FIELD_CLOSE_POSITION_VALUE,           # 平仓价仓位价值
-    FIELD_CLOSE_PNL_PERCENT,               # 平仓价涨跌盈亏幅
-    FIELD_CLOSE_PNL,                       # 平仓收益
-    FIELD_CLOSE_PNL_PERCENT_OF_MARGIN,     # 平仓收益率
+    FIELD_CLOSE_PRICE,
+    FIELD_CLOSE_POSITION_VALUE,
+    FIELD_CLOSE_PNL_PERCENT,
+    FIELD_CLOSE_PNL,
+    FIELD_CLOSE_PNL_PERCENT_OF_MARGIN,
     FIELD_AVG_FUNDING_RATE,
     FIELD_FUNDING_THIS,
     FIELD_FUNDING_TOTAL,
@@ -133,20 +132,18 @@ class OkxMissingRepair:
         self.scheduler = scheduler
 
         # ===== 门外标签状态（不是缓存，只是记录）=====
-        self.current_info = None      # 当前是什么标签
+        self.current_info = None
 
         # ===== 门外存储区快照（receiver推送过来的）=====
-        self.latest_snapshot = None    # 最新的存储区快照
+        self.latest_snapshot = None
 
         # ===== 修复循环控制 =====
-        self.is_running = False       # 修复流程是否在运行
-        self.repair_task = None       # 修复任务
+        self.is_running = False
+        self.repair_task = None
 
         # ===== 本文件数据缓存（用于修复计算）=====
-        # 只存1条数据，覆盖更新
-        self.cache = None              # 类型: Dict or None
+        self.cache = None
 
-        # ✅ [MongoDB迁移] 不再保存数据库连接，改为按需连接
         # 临时存储门外数据（供第3步使用）
         self._snapshot_data = None
 
@@ -174,11 +171,10 @@ class OkxMissingRepair:
         :param info: 信息标签，只能是"欧意持仓缺失"或"欧意空仓"
         """
         old_info = self.current_info
-        self.current_info = info  # 覆盖更新
+        self.current_info = info
 
         logger.debug(f"📨【欧易持仓缺失修复区】 门外标签更新: {old_info} → {info}")
 
-        # ===== 根据标签决定开关 =====
         if info == INFO_OKX_MISSING:
             await self._start_repair()
         elif info == INFO_OKX_EMPTY:
@@ -192,8 +188,8 @@ class OkxMissingRepair:
         ==================================================
         这是修复区的数据入口，receiver会把整个存储区推送到这里：
             {
-                'market_data': {...},  # 所有合约的行情数据（欧易不需要）
-                'user_data': {...},     # 所有交易所的私人数据
+                'market_data': {...},
+                'user_data': {...},
                 'timestamp': '...'
             }
 
@@ -253,7 +249,7 @@ class OkxMissingRepair:
         logger.debug("🔄【欧易持仓缺失修复区】 修复循环开始")
 
         while self.is_running:
-            await asyncio.sleep(0)  # ✅ 循环开始让出CPU，避免长时间占用
+            await asyncio.sleep(0)
             try:
                 if self.current_info != INFO_OKX_MISSING:
                     logger.debug("【欧易持仓缺失修复区】门外标签已不是持仓缺失，停止修复循环")
@@ -291,7 +287,6 @@ class OkxMissingRepair:
             logger.error("❌【欧易持仓缺失修复区】 第1步失败：无法获取缓存数据，本次修复终止")
             return
 
-        # 检查门外是否有存储区数据
         if not self.latest_snapshot:
             logger.warning("⚠️【欧易持仓缺失修复区】 门外还没有存储区数据，等待下次循环")
             return
@@ -343,37 +338,49 @@ class OkxMissingRepair:
         - 按标准顺序重新排列字段（让路由数据显示整齐）
         ==================================================
         """
-        # ----- 第1层：检查缓存 -----
         if self.cache is not None:
             logger.debug("✅【欧易持仓缺失修复区】 第1步：使用现有缓存")
             return True
 
         logger.info("🔍【欧易持仓缺失修复区】 第1步：缓存为空，准备从MongoDB读取")
 
-        # ----- 第2层：获取MongoDB连接信息（按需读取环境变量）-----
-        mongo_uri = os.getenv('MONGODB_URI')
-
-        if not mongo_uri:
-            logger.error("❌【欧易持仓缺失修复区】 环境变量 MONGODB_URI 未设置")
+        # ----- 第2层：获取MongoDB连接信息（通过全局大脑实例获取）-----
+        try:
+            from smart_brain import get_brain_instance
+            brain = get_brain_instance()
+            if brain is None:
+                logger.error("❌【欧易持仓缺失修复区】 大脑实例尚未初始化")
+                return False
+            
+            data_manager = brain.data_manager
+            mongo_uri = data_manager.get_database_config('mongodb_uri')
+            
+            if not mongo_uri:
+                logger.error("❌【欧易持仓缺失修复区】 MongoDB 连接信息未配置")
+                return False
+            
+            logger.info("✅【欧易持仓缺失修复区】 成功从 data_manager 读取MongoDB连接信息")
+            
+        except ImportError as e:
+            logger.error(f"❌【欧易持仓缺失修复区】 无法导入 smart_brain 模块: {e}")
             return False
-
-        logger.info("✅【欧易持仓缺失修复区】 成功读取MongoDB连接信息")
+        except AttributeError as e:
+            logger.error(f"❌【欧易持仓缺失修复区】 大脑实例结构异常: {e}")
+            return False
 
         # ----- 第3层：连接MongoDB并查询欧意数据 -----
         loop = asyncio.get_event_loop()
         client = None
         try:
-            # 临时连接MongoDB（用完即关）
             client = await loop.run_in_executor(
                 None,
                 lambda: MongoClient(
                     mongo_uri,
-                    serverSelectionTimeoutMS=5000,  # 5秒连接超时
+                    serverSelectionTimeoutMS=5000,
                     connectTimeoutMS=5000
                 )
             )
             
-            # 测试连接
             await loop.run_in_executor(
                 None,
                 lambda: client.admin.command('ping')
@@ -383,8 +390,6 @@ class OkxMissingRepair:
             db = client["trading_db"]
             collection = db["active_positions"]
             
-            # ✅ 查询欧意数据，按开仓时间倒序取最新一条
-            # 防止平仓失败时残留的旧数据干扰修复流程
             cursor = await loop.run_in_executor(
                 None,
                 lambda: collection.find({"交易所": "okx"}).sort("开仓时间", -1).limit(1)
@@ -397,7 +402,6 @@ class OkxMissingRepair:
             
             result = results[0] if results else None
             
-            # 如果没有找到，尝试其他可能的交易所名称
             if not result:
                 logger.warning("⚠️【欧易持仓缺失修复区】 未找到交易所为 'okx' 的数据，尝试其他写法")
                 test_exchanges = ['OKX', 'Okx', 'okex', 'OKEX', '欧意', '欧易']
@@ -405,7 +409,7 @@ class OkxMissingRepair:
                     await asyncio.sleep(0)
                     cursor = await loop.run_in_executor(
                         None,
-                        lambda: collection.find({"交易所": test_exchange}).sort("开仓时间", -1).limit(1)
+                        lambda ex=test_exchange: collection.find({"交易所": ex}).sort("开仓时间", -1).limit(1)
                     )
                     results = await loop.run_in_executor(
                         None,
@@ -420,12 +424,9 @@ class OkxMissingRepair:
                 logger.error("❌【欧易持仓缺失修复区】 尝试了所有可能的交易所名称，都没有找到数据")
                 return False
             
-            # ----- 第4层：数据清洗，然后存入缓存 -----
-            # 1. 删除 MongoDB 的 _id 字段（避免 JSON 序列化报错）
             if '_id' in result:
                 del result['_id']
             
-            # 2. 按标准顺序重新排列字段（让路由数据显示整齐）
             result = order_dict(result)
             
             self.cache = result
@@ -436,7 +437,6 @@ class OkxMissingRepair:
             logger.info(f"   开仓时间: {self.cache.get('开仓时间')}")
             logger.info(f"   ID: {self.cache.get('id')}")
             
-            # 打印关键字段
             logger.debug(f"   开仓价: {self.cache.get(FIELD_OPEN_PRICE)}")
             logger.debug(f"   持仓张数: {self.cache.get(FIELD_POSITION_CONTRACTS)}")
             logger.debug(f"   累计资金费: {self.cache.get(FIELD_FUNDING_TOTAL)}")
@@ -447,7 +447,6 @@ class OkxMissingRepair:
             logger.error(f"❌【欧易持仓缺失修复区】 第1步：读取MongoDB失败: {e}", exc_info=True)
             return False
         finally:
-            # 无论成功失败，都关闭连接
             if client:
                 await loop.run_in_executor(None, client.close)
                 logger.debug("🔌【欧易持仓缺失修复区】 MongoDB连接已关闭")
@@ -469,7 +468,6 @@ class OkxMissingRepair:
         """
         logger.debug("【欧易持仓缺失修复区】第2步：检测资金费状态")
 
-        # 从门外存储区快照获取最新的欧意数据
         snapshot_data = self._get_okx_from_snapshot()
         if not snapshot_data:
             logger.error("❌【欧易持仓缺失修复区】 门外存储区中没有欧意数据")
@@ -488,7 +486,6 @@ class OkxMissingRepair:
         logger.debug(f" 【欧易持仓缺失修复区】  缓存累计资金费: {cache_total}, 门外存储区累计资金费: {snapshot_total}")
         logger.debug(f" 【欧易持仓缺失修复区】  有无历史: {has_history}, 有无新结算: {has_new}")
 
-        # 保存门外数据供后续步骤使用
         self._snapshot_data = snapshot_data
 
         if not has_history and not has_new:
@@ -524,9 +521,7 @@ class OkxMissingRepair:
         snapshot = self._snapshot_data
         cache = self.cache
         
-        # ===== 第1部分：需要计算的字段（用安全转换保护）=====
         try:
-            # 本次资金费 = 存储区累计资金费 - 缓存累计资金费
             snapshot_total = self._safe_float(snapshot.get(FIELD_FUNDING_TOTAL))
             cache_total = self._safe_float(cache.get(FIELD_FUNDING_TOTAL))
             cache[FIELD_FUNDING_THIS] = snapshot_total - cache_total
@@ -535,21 +530,16 @@ class OkxMissingRepair:
             logger.error(f" ❌ 本次资金费计算失败: {e}，保持原值 {cache.get(FIELD_FUNDING_THIS)}")
 
         try:
-            # 资金费结算次数加1
             cache_count = self._safe_float(cache.get(FIELD_FUNDING_COUNT))
             cache[FIELD_FUNDING_COUNT] = cache_count + 1
             logger.debug(f" ✅ 结算次数计算: {cache_count} + 1 = {cache[FIELD_FUNDING_COUNT]}")
         except Exception as e:
             logger.error(f" ❌ 结算次数计算失败: {e}，保持原值 {cache.get(FIELD_FUNDING_COUNT)}")
 
-
-        # ===== 第2部分：直接覆盖的字段（即使第1部分失败也要更新）=====
-        # 累计资金费直接覆盖
         if FIELD_FUNDING_TOTAL in snapshot:
             cache[FIELD_FUNDING_TOTAL] = snapshot[FIELD_FUNDING_TOTAL]
             logger.debug(f" ✅ 累计资金费已覆盖: {cache[FIELD_FUNDING_TOTAL]}")
         
-        # 本次结算时间直接覆盖
         if FIELD_FUNDING_TIME in snapshot and snapshot[FIELD_FUNDING_TIME] is not None:
             cache[FIELD_FUNDING_TIME] = snapshot[FIELD_FUNDING_TIME]
             logger.debug(f" ✅ 本次结算时间已覆盖: {cache[FIELD_FUNDING_TIME]}")
@@ -586,7 +576,7 @@ class OkxMissingRepair:
         skip_count = 0
 
         for key, value in snapshot_data.items():
-            await asyncio.sleep(0)  # ✅ 循环内让出CPU
+            await asyncio.sleep(0)
             if key in protected_fields:
                 skip_count += 1
                 continue
@@ -655,76 +645,60 @@ class OkxMissingRepair:
 
         cache = self.cache
 
-        # ===== 使用安全转换获取所有原始字段值 =====
         mark_price = self._safe_float(cache.get(FIELD_MARK_PRICE))
         latest_price = self._safe_float(cache.get(FIELD_LATEST_PRICE))
-        close_price = cache.get(FIELD_CLOSE_PRICE)  # 平仓价可能为None，保持原样
+        close_price = cache.get(FIELD_CLOSE_PRICE)
         contract_value = self._safe_float(cache.get(FIELD_CONTRACT_VALUE))
         contracts = self._safe_float(cache.get(FIELD_POSITION_CONTRACTS))
-        position_size = self._safe_float(cache.get(FIELD_POSITION_SIZE))  # 持仓币数
+        position_size = self._safe_float(cache.get(FIELD_POSITION_SIZE))
         leverage = self._safe_float(cache.get(FIELD_LEVERAGE), 1.0)
         open_price = self._safe_float(cache.get(FIELD_OPEN_PRICE))
         open_position_value = self._safe_float(cache.get(FIELD_OPEN_POSITION_VALUE))
-        direction = cache.get(FIELD_OPEN_DIRECTION)  # 值为 "LONG" 或 "SHORT"
+        direction = cache.get(FIELD_OPEN_DIRECTION)
         total_funding = self._safe_float(cache.get(FIELD_FUNDING_TOTAL))
-        mark_position_value = self._safe_float(cache.get(FIELD_MARK_POSITION_VALUE))  # 标记价仓位价值
-        mark_margin = self._safe_float(cache.get(FIELD_MARK_MARGIN))  # 标记价保证金
+        mark_position_value = self._safe_float(cache.get(FIELD_MARK_POSITION_VALUE))
+        mark_margin = self._safe_float(cache.get(FIELD_MARK_MARGIN))
 
-        # 根据开仓方向计算 - 每个字段严格按照原始公式独立计算
         if direction == "LONG":
-            # 多头 - 严格按照原始公式，独立计算每个字段
-
-            # 1. 标记价涨跌盈亏幅 = (标记价 - 开仓价) * 100 / 开仓价
             mark_pnl_percent = (mark_price - open_price) * 100 / open_price if open_price else 0
-            mark_pnl_percent = round(mark_pnl_percent, 4)  # 四舍五入保留4位小数
+            mark_pnl_percent = round(mark_pnl_percent, 4)
 
-            # 2. 最新价涨跌盈亏幅 = (最新价 - 开仓价) * 100 / 开仓价
             latest_pnl_percent = (latest_price - open_price) * 100 / open_price if open_price else 0
-            latest_pnl_percent = round(latest_pnl_percent, 4)  # 四舍五入保留4位小数
+            latest_pnl_percent = round(latest_pnl_percent, 4)
 
-            # 3. 标记价仓位价值 = 标记价 * 合约面值 * 持仓张数
             mark_position_value_calc = mark_price * contract_value * contracts
-            mark_position_value_calc = round(mark_position_value_calc, 4)  # 四舍五入保留4位小数
+            mark_position_value_calc = round(mark_position_value_calc, 4)
 
-            # 4. 最新价仓位价值 = 最新价 * 合约面值 * 持仓张数
             latest_position_value = latest_price * contract_value * contracts
-            latest_position_value = round(latest_position_value, 4)  # 四舍五入保留4位小数
+            latest_position_value = round(latest_position_value, 4)
 
-            # 5. 最新价保证金 = 最新价 * 合约面值 * 持仓张数 ÷ 杠杆
             latest_margin = (latest_price * contract_value * contracts / leverage) if leverage else 0
-            latest_margin = round(latest_margin, 4)  # 四舍五入保留4位小数
+            latest_margin = round(latest_margin, 4)
 
-            # 6. 平均资金费率 = 累计资金费 * 100 / 开仓价仓位价值
             avg_funding_rate = (total_funding * 100 / open_position_value) if open_position_value else 0
-            avg_funding_rate = round(avg_funding_rate, 4)  # 四舍五入保留4位小数
+            avg_funding_rate = round(avg_funding_rate, 4)
 
-            # 保存原有6个字段的计算结果
-            cache[FIELD_MARK_PNL_PERCENT] = mark_pnl_percent              # 1. 标记价涨跌盈亏幅
-            cache[FIELD_LATEST_PNL_PERCENT] = latest_pnl_percent          # 2. 最新价涨跌盈亏幅
-            cache[FIELD_MARK_POSITION_VALUE] = mark_position_value_calc   # 3. 标记价仓位价值
-            cache[FIELD_LATEST_POSITION_VALUE] = latest_position_value    # 4. 最新价仓位价值
-            cache[FIELD_LATEST_MARGIN] = latest_margin                     # 5. 最新价保证金
-            cache[FIELD_AVG_FUNDING_RATE] = avg_funding_rate               # 6. 平均资金费率
+            cache[FIELD_MARK_PNL_PERCENT] = mark_pnl_percent
+            cache[FIELD_LATEST_PNL_PERCENT] = latest_pnl_percent
+            cache[FIELD_MARK_POSITION_VALUE] = mark_position_value_calc
+            cache[FIELD_LATEST_POSITION_VALUE] = latest_position_value
+            cache[FIELD_LATEST_MARGIN] = latest_margin
+            cache[FIELD_AVG_FUNDING_RATE] = avg_funding_rate
 
-            # ===== 新增：平仓相关字段（仅在平仓价不为空时计算）=====
             if close_price is not None:
                 close_price_float = self._safe_float(close_price)
-                # 7. 平仓价仓位价值 = 平仓价 * 持仓币数
                 close_position_value = close_price_float * position_size
                 close_position_value = round(close_position_value, 4)
                 cache[FIELD_CLOSE_POSITION_VALUE] = close_position_value
 
-                # 8. 平仓价涨跌盈亏幅 = (平仓价 - 开仓价) * 100 / 开仓价
                 close_pnl_percent = (close_price_float - open_price) * 100 / open_price if open_price else 0
                 close_pnl_percent = round(close_pnl_percent, 4)
                 cache[FIELD_CLOSE_PNL_PERCENT] = close_pnl_percent
 
-                # 9. 平仓收益 = (平仓价 - 开仓价) * 持仓币数
                 close_pnl = (close_price_float - open_price) * position_size
                 close_pnl = round(close_pnl, 4)
                 cache[FIELD_CLOSE_PNL] = close_pnl
 
-                # 10. 平仓收益率 = (平仓价 - 开仓价) * |标记价仓位价值| * 100 / (开仓价 * 标记价保证金)
                 mark_position_value_abs = abs(mark_position_value_calc)
                 close_pnl_percent_of_margin = (close_price_float - open_price) * mark_position_value_abs * 100 / (open_price * mark_margin) if (open_price and mark_margin) else 0
                 close_pnl_percent_of_margin = round(close_pnl_percent_of_margin, 4)
@@ -738,60 +712,46 @@ class OkxMissingRepair:
             else:
                 logger.debug("  【欧易持仓缺失修复区】 平仓价为空，跳过平仓相关字段计算")
 
-        else:  # direction == "SHORT"
-            # 空头 - 严格按照原始公式，独立计算每个字段
-
-            # 1. 标记价涨跌盈亏幅 = (开仓价 - 标记价) * 100 / 开仓价
+        else:
             mark_pnl_percent = (open_price - mark_price) * 100 / open_price if open_price else 0
-            mark_pnl_percent = round(mark_pnl_percent, 4)  # 四舍五入保留4位小数
+            mark_pnl_percent = round(mark_pnl_percent, 4)
 
-            # 2. 最新价涨跌盈亏幅 = (开仓价 - 最新价) * 100 / 开仓价
             latest_pnl_percent = (open_price - latest_price) * 100 / open_price if open_price else 0
-            latest_pnl_percent = round(latest_pnl_percent, 4)  # 四舍五入保留4位小数
+            latest_pnl_percent = round(latest_pnl_percent, 4)
 
-            # 3. 标记价仓位价值 = 标记价 * 合约面值 * 持仓张数
             mark_position_value_calc = mark_price * contract_value * contracts
-            mark_position_value_calc = round(mark_position_value_calc, 4)  # 四舍五入保留4位小数
+            mark_position_value_calc = round(mark_position_value_calc, 4)
 
-            # 4. 最新价仓位价值 = 最新价 * 合约面值 * 持仓张数
             latest_position_value = latest_price * contract_value * contracts
-            latest_position_value = round(latest_position_value, 4)  # 四舍五入保留4位小数
+            latest_position_value = round(latest_position_value, 4)
 
-            # 5. 最新价保证金 = 最新价 * 合约面值 * 持仓张数 ÷ 杠杆
             latest_margin = (latest_price * contract_value * contracts / leverage) if leverage else 0
-            latest_margin = round(latest_margin, 4)  # 四舍五入保留4位小数
+            latest_margin = round(latest_margin, 4)
 
-            # 6. 平均资金费率 = 累计资金费 * 100 / 开仓价仓位价值
             avg_funding_rate = (total_funding * 100 / open_position_value) if open_position_value else 0
-            avg_funding_rate = round(avg_funding_rate, 4)  # 四舍五入保留4位小数
+            avg_funding_rate = round(avg_funding_rate, 4)
 
-            # 保存原有6个字段的计算结果
-            cache[FIELD_MARK_PNL_PERCENT] = mark_pnl_percent              # 1. 标记价涨跌盈亏幅
-            cache[FIELD_LATEST_PNL_PERCENT] = latest_pnl_percent          # 2. 最新价涨跌盈亏幅
-            cache[FIELD_MARK_POSITION_VALUE] = mark_position_value_calc   # 3. 标记价仓位价值
-            cache[FIELD_LATEST_POSITION_VALUE] = latest_position_value    # 4. 最新价仓位价值
-            cache[FIELD_LATEST_MARGIN] = latest_margin                     # 5. 最新价保证金
-            cache[FIELD_AVG_FUNDING_RATE] = avg_funding_rate               # 6. 平均资金费率
+            cache[FIELD_MARK_PNL_PERCENT] = mark_pnl_percent
+            cache[FIELD_LATEST_PNL_PERCENT] = latest_pnl_percent
+            cache[FIELD_MARK_POSITION_VALUE] = mark_position_value_calc
+            cache[FIELD_LATEST_POSITION_VALUE] = latest_position_value
+            cache[FIELD_LATEST_MARGIN] = latest_margin
+            cache[FIELD_AVG_FUNDING_RATE] = avg_funding_rate
 
-            # ===== 新增：平仓相关字段（仅在平仓价不为空时计算）=====
             if close_price is not None:
                 close_price_float = self._safe_float(close_price)
-                # 7. 平仓价仓位价值 = 平仓价 * 持仓币数
                 close_position_value = close_price_float * position_size
                 close_position_value = round(close_position_value, 4)
                 cache[FIELD_CLOSE_POSITION_VALUE] = close_position_value
 
-                # 8. 平仓价涨跌盈亏幅 = (开仓价 - 平仓价) * 100 / 开仓价
                 close_pnl_percent = (open_price - close_price_float) * 100 / open_price if open_price else 0
                 close_pnl_percent = round(close_pnl_percent, 4)
                 cache[FIELD_CLOSE_PNL_PERCENT] = close_pnl_percent
 
-                # 9. 平仓收益 = (开仓价 - 平仓价) * 持仓币数
                 close_pnl = (open_price - close_price_float) * position_size
                 close_pnl = round(close_pnl, 4)
                 cache[FIELD_CLOSE_PNL] = close_pnl
 
-                # 10. 平仓收益率 = (开仓价 - 平仓价) * |标记价仓位价值| * 100 / (开仓价 * 标记价保证金)
                 mark_position_value_abs = abs(mark_position_value_calc)
                 close_pnl_percent_of_margin = (open_price - close_price_float) * mark_position_value_abs * 100 / (open_price * mark_margin) if (open_price and mark_margin) else 0
                 close_pnl_percent_of_margin = round(close_pnl_percent_of_margin, 4)
@@ -829,17 +789,13 @@ class OkxMissingRepair:
 
         data_copy = self.cache.copy()
         
-        # 检测平仓价字段
         close_price = data_copy.get(FIELD_CLOSE_PRICE)
         close_time = data_copy.get(FIELD_CLOSE_TIME)
         
-        # 确定要打的标签
         if close_price is not None and close_price != '' and close_time is not None and close_time != '':
-            # 平仓价和平仓时间都有值，说明已平仓
             tag = TAG_CLOSED_COMPLETE
             logger.debug(f"  【欧易持仓缺失修复区】 检测到平仓价有值，打标签: {tag}")
         else:
-            # 平仓价或平仓时间为空，说明还在持仓中
             tag = TAG_COMPLETE
             logger.debug(f"  【欧易持仓缺失修复区】 检测到平仓价为空，打标签: {tag}")
 
@@ -863,7 +819,7 @@ class OkxMissingRepair:
                 'user_data': {
                     'okx_user': {
                         'exchange': 'okx',
-                        'data': {...}  # 这是真正的业务数据
+                        'data': {...}
                     }
                 }
             }
@@ -877,7 +833,6 @@ class OkxMissingRepair:
         okx_key = f"{EXCHANGE_OKX}_user"
         okx_item = user_data.get(okx_key, {})
 
-        # 返回实际的业务数据
         return okx_item.get('data')
 
     def _update_funding_fields(self, snapshot_data: Dict):
@@ -902,16 +857,3 @@ class OkxMissingRepair:
                 update_count += 1
 
         logger.debug(f" 【欧易持仓缺失修复区】  已更新 {update_count} 个资金费字段")
-
-
-# ==================== 已移除的方法 ====================
-"""
-【已移除的方法 - 不再需要】
-
-以下方法在原Turso版本中存在，MongoDB版本不再需要：
-
-1. _query_database() - 改用MongoDB的直接查询
-2. _row_to_dict() - MongoDB返回的就是字典，不需要转换
-
-所有数据库操作都在第1步按需完成，用完即关，不保留长连接。
-"""
