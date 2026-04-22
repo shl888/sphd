@@ -11,7 +11,7 @@
 5. 收到开仓参数时，额外触发清理残留止损单任务
 
 数据流向：
-- 大脑 → 下单工人：订单参数（send_orders）
+- 各个工人文件 → 下单工人：订单参数（send_orders）
 - 下单工人 → 大脑：执行结果（on_trader_results）
 - 下单工人 → 标签调度器：标签（receive）
 
@@ -252,19 +252,21 @@ class Trader:
         async with self._cleanup_lock:
             self._last_cleanup_time = time.time()
             
+            # 欧易清理（独立 try 块，失败不影响币安）
             try:
-                # 欧易清理
                 okx_creds = creds_map.get("okx")
                 if okx_creds:
                     await self._cleanup_okx_algo_orders(okx_creds)
-                
-                # 币安清理
+            except Exception as e:
+                logger.warning(f"⚠️【下单工人】欧易清理残留单异常（可忽略）: {e}")
+            
+            # 币安清理（独立 try 块，失败不影响欧易）
+            try:
                 binance_creds = creds_map.get("binance")
                 if binance_creds:
                     await self._cleanup_binance_open_orders(binance_creds)
-                    
             except Exception as e:
-                logger.warning(f"⚠️【下单工人】清理残留单异常（可忽略）: {e}")
+                logger.warning(f"⚠️【下单工人】币安清理残留单异常（可忽略）: {e}")
     
     async def _cleanup_okx_algo_orders(self, creds: Dict):
         """清理欧易残留的止盈止损单"""
@@ -343,7 +345,17 @@ class Trader:
             logger.warning(f"⚠️【下单工人】欧易清理残留单失败（可忽略）: {e}")
     
     async def _cleanup_binance_open_orders(self, creds: Dict):
-        """清理币安残留的条件单"""
+        """
+        清理币安残留的条件单
+        
+        注意：测试网（sandbox）环境下该接口不稳定，会返回空响应或502错误，
+        因此模拟模式下直接跳过清理逻辑。
+        """
+        # 模拟环境下跳过（测试网不支持此接口稳定工作）
+        if self.use_sandbox:
+            logger.debug("🧹【下单工人】币安模拟模式，测试网策略单接口不稳定，跳过清理")
+            return
+        
         try:
             api_key = creds.get("api_key")
             api_secret = creds.get("api_secret")
