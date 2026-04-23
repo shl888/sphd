@@ -57,7 +57,7 @@ class ConfigHandler:
             if brain and brain.tag_dispatcher:
                 # 异步发送标签
                 asyncio.create_task(brain.tag_dispatcher.receive({"info": "密钥已就绪"}))
-                logger.info("📢【配置处理器】已发送「密钥已就绪」标签给调度器")
+                logger.info("📢【配置处理器】已发送「密钥已就绪」标签给标签调度器")
             else:
                 logger.warning("⚠️【配置处理器】TagDispatcher 未初始化，无法发送标签")
         except Exception as e:

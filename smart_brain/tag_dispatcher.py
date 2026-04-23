@@ -56,6 +56,9 @@ class TagDispatcher:
         # 密钥使用者列表（API和数据库使用者）
         self.key_consumers: List[Any] = []
         
+        # 缓存「密钥已就绪」标签
+        self._keys_ready_cached = False
+        
         # 标签路由表（值可以是单个工人属性名，也可以是列表）
         self._route_table = self._build_route_table()
         
@@ -78,7 +81,6 @@ class TagDispatcher:
             "币安开仓成功": ["funding_sltp", "spread_sltp"],  
             
             # ========== 策略标签（广播给两套策略的止损止盈和清仓工人） ==========
-            # 等价差工人实现后，把注释去掉
             "当前策略:资金费套利": ["funding_sltp", "funding_close"],
             "当前策略:价差套利": ["spread_sltp", "spread_close"],
         }
@@ -90,8 +92,29 @@ class TagDispatcher:
         参数:
             consumers: 密钥使用者列表
         """
+        if self.key_consumers:
+            logger.warning("⚠️【标签调度器】使用者已注册，不能重复注册")
+            return
+        
         self.key_consumers = consumers
         logger.info(f"📋【标签调度器】已注册 {len(consumers)} 个密钥使用者")
+        
+        # 如果之前已经缓存了「密钥已就绪」标签，立即广播
+        if self._keys_ready_cached:
+            logger.info("🚀【标签调度器】使用者已注册，广播缓存的「密钥已就绪」标签")
+            self._broadcast_keys_ready()
+    
+    def _broadcast_keys_ready(self):
+        """广播「密钥已就绪」标签给所有密钥使用者"""
+        for consumer in self.key_consumers:
+            try:
+                if hasattr(consumer, 'on_keys_ready'):
+                    consumer.on_keys_ready()
+                    logger.info(f"📤【标签调度器】「密钥已就绪」已发送: {type(consumer).__name__}")
+                else:
+                    logger.warning(f"⚠️【标签调度器】使用者没有 on_keys_ready 方法: {type(consumer).__name__}")
+            except Exception as e:
+                logger.error(f"❌【标签调度器】发送「密钥已就绪」失败: {type(consumer).__name__}, 错误: {e}")
     
     async def receive(self, tag_data: Dict[str, Any]) -> None:
         """
@@ -106,22 +129,18 @@ class TagDispatcher:
             logger.warning(f"⚠️【标签调度器】收到的数据没有 info 字段: {tag_data}")
             return
         
+        logger.info(f"📨【标签调度器】收到标签: {info}")
+        
         # ========== 特殊处理：密钥已就绪标签 ==========
         if info == "密钥已就绪":
-            if not self.key_consumers:
-                logger.warning("⚠️【标签调度器】收到「密钥已就绪」标签，但没有注册的密钥使用者")
-                return
+            self._keys_ready_cached = True
             
-            for consumer in self.key_consumers:
-                try:
-                    # 执行发送动作：调用使用者的 on_keys_ready() 方法
-                    if hasattr(consumer, 'on_keys_ready'):
-                        consumer.on_keys_ready()
-                        logger.info(f"📤【标签调度器】「密钥已就绪」已发送: {type(consumer).__name__}")
-                    else:
-                        logger.warning(f"⚠️【标签调度器】使用者没有 on_keys_ready 方法: {type(consumer).__name__}")
-                except Exception as e:
-                    logger.error(f"❌【标签调度器】发送「密钥已就绪」失败: {type(consumer).__name__}, 错误: {e}")
+            if self.key_consumers:
+                # 使用者已注册，立即广播
+                self._broadcast_keys_ready()
+            else:
+                # 使用者未注册，缓存标签，等待注册
+                logger.info("📦【标签调度器】「密钥已就绪」标签已缓存，等待使用者注册...")
             return
         # ==========================================
         
