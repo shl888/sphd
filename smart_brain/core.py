@@ -106,14 +106,6 @@ class SmartBrain:
         logger.info(f"🔒【智能大脑】初始交易模式: {self.trade_mode}（禁止交易）")
         
         try:
-            # ========== 0. 创建配置处理器 ==========
-            from .config_handler import ConfigHandler
-            from . import set_config_handler
-            self.config_handler = ConfigHandler(self.data_manager)
-            set_config_handler(self.config_handler)  # 设置全局实例，供 qd_server 获取
-            self.config_handler.load_credentials()
-            logger.info("✅【智能大脑】配置处理器已创建")
-            
             # 1. 初始化HTTP模块服务
             try:
                 from http_server.service import HTTPModuleService
@@ -169,7 +161,15 @@ class SmartBrain:
             )
             logger.info("✅【智能大脑】标签调度器已创建")
             
-            # 6. 创建下单工人
+            # 6. 创建配置处理器（必须在标签调度器之后）
+            from .config_handler import ConfigHandler
+            from . import set_config_handler
+            self.config_handler = ConfigHandler(self.data_manager)
+            set_config_handler(self.config_handler)  # 设置全局实例，供 qd_server 获取
+            self.config_handler.load_credentials()
+            logger.info("✅【智能大脑】配置处理器已创建")
+            
+            # 7. 创建下单工人
             from http_server.trader import Trader
             self.trader = Trader(self, use_sandbox=True)
             # 将标签调度器注入给下单工人
@@ -177,10 +177,10 @@ class SmartBrain:
             asyncio.create_task(self.trader.start())
             logger.info("✅【智能大脑】下单工人已创建并启动（已注入标签调度器）")
             
-            # 7. 启动状态日志任务
+            # 8. 启动状态日志任务
             self.status_log_task = asyncio.create_task(self.data_manager._log_data_status())
             
-            # 8. 完成初始化
+            # 9. 完成初始化
             self.running = True
             logger.info("✅【智能大脑】大脑核心初始化完成")
             
