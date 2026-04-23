@@ -34,6 +34,10 @@ class PrivateWebSocketPool:
         self.start_time = None
         self.reconnect_tasks = {}
         
+        # ========== 密钥就绪标志 ==========
+        self._keys_ready = False
+        self._pending_connect = False  # 是否有待执行的连接
+        
         # 连接质量统计
         self.quality_stats = {
             'binance': {
@@ -58,6 +62,24 @@ class PrivateWebSocketPool:
         
         logger.info("🔗 [私人连接池] 初始化完成 (直接推送模式)")
     
+    # ==================== 标签接收 ====================
+    
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【私人连接池】密钥已就绪，获得工作权限")
+        
+        # 如果有待执行的连接，立即启动
+        if self._pending_connect:
+            logger.info("🚀【私人连接池】开始执行待处理的连接任务")
+            asyncio.create_task(self._staggered_connect_all())
+            self._pending_connect = False
+    
+    # ==================== 启动与连接 ====================
+    
     async def start(self, brain_store):
         """启动连接池"""
         logger.info("🚀 [私人连接池] 正在稳健启动...")
@@ -69,10 +91,17 @@ class PrivateWebSocketPool:
         # 启动连接监控循环（只做基础状态检查）
         asyncio.create_task(self._connection_monitor_loop())
         
-        # 分批尝试连接
-        asyncio.create_task(self._staggered_connect_all())
+        # 检查密钥是否已就绪
+        if self._keys_ready:
+            # 密钥已就绪，直接启动连接
+            logger.info("🔑【私人连接池】密钥已就绪，直接启动连接")
+            asyncio.create_task(self._staggered_connect_all())
+        else:
+            # 密钥未就绪，标记待执行，等待标签
+            logger.info("⏳【私人连接池】密钥未就绪，等待标签...")
+            self._pending_connect = True
         
-        logger.info("✅ [私人连接池] 已启动，自主推送模式运行中")
+        logger.info("✅ [私人连接池] 已启动")
         return True
     
     async def _staggered_connect_all(self):
@@ -263,8 +292,8 @@ class PrivateWebSocketPool:
             connection = BinancePrivateConnection(
                 listen_key=listen_key,
                 status_callback=self._handle_connection_status,
-                data_callback=self._process_and_forward_data,  # 仍然使用内部方法
-                raw_data_cache=None  # 🔴 【修改点】设为None
+                data_callback=self._process_and_forward_data,
+                raw_data_cache=None
             )
             
             # 建立连接
@@ -309,8 +338,8 @@ class PrivateWebSocketPool:
                 api_secret=api_creds['api_secret'],
                 passphrase=api_creds.get('passphrase', ''),
                 status_callback=self._handle_connection_status,
-                data_callback=self._process_and_forward_data,  # 仍然使用内部方法
-                raw_data_cache=None  # 🔴 【修改点】设为None
+                data_callback=self._process_and_forward_data,
+                raw_data_cache=None
             )
             
             # 建立连接
@@ -373,12 +402,12 @@ class PrivateWebSocketPool:
             logger.error(f"[私人连接池] ❌ 处理状态事件失败: {e}")
     
     async def _process_and_forward_data(self, raw_data: Dict[str, Any]):
-        """🔴 【修改点】处理并转发数据 - 硬编码推送到新模块"""
+        """处理并转发数据 - 硬编码推送到新模块"""
         try:
             # 硬编码推送到私人数据处理模块
             try:
                 from private_data_processing.manager import receive_private_data
-                asyncio.create_task(receive_private_data(raw_data))  # ← 不等待
+                asyncio.create_task(receive_private_data(raw_data))
                 logger.debug(f"[私人连接池] 📨 已推送到私人数据处理模块: {raw_data['exchange']}.{raw_data['data_type']}")
             except ImportError as e:
                 logger.error(f"[私人连接池] ❌ 无法导入私人数据处理模块: {e}")
@@ -424,6 +453,8 @@ class PrivateWebSocketPool:
             'timestamp': datetime.now().isoformat(),
             'running': self.running,
             'uptime_seconds': (datetime.now() - self.start_time).total_seconds() if self.start_time else 0,
+            'keys_ready': self._keys_ready,  # 新增：密钥就绪状态
+            'pending_connect': self._pending_connect,  # 新增：是否有待执行连接
             'connections': {},
             'quality_stats': self.quality_stats,
             'alerts': [],
@@ -431,7 +462,7 @@ class PrivateWebSocketPool:
                 'binance': '主动探测模式（30秒探测）',
                 'okx': '协议层心跳模式（25秒协议层心跳 + 45秒被动检测）'
             },
-            'data_destination': '私人数据处理模块（硬编码推送）'  # 🔴 【修改点】
+            'data_destination': '私人数据处理模块（硬编码推送）'
         }
         
         for exchange in ['binance', 'okx']:
@@ -478,4 +509,3 @@ class PrivateWebSocketPool:
         }
         
         return status
-        
