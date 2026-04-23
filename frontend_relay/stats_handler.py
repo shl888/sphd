@@ -74,31 +74,6 @@ class StatsHandler:
         logger.debug(f"✅ 【数据统计处理器】qd_server 引用已保存")
         # ========== qd_server 引用保存完毕 ==========
         
-        # ========== 读取 MongoDB 连接信息 ==========
-        # 通过 qd_server -> brain -> data_manager 获取数据库配置
-        try:
-            data_manager = self.qd_server.brain.data_manager
-            self.mongo_uri = data_manager.get_database_config('mongodb_uri')
-            
-            if not self.mongo_uri:
-                logger.error("❌ 【数据统计处理器】MongoDB 连接信息未配置，将无法查询数据库")
-            else:
-                # 隐藏密码打印
-                masked_uri = self.mongo_uri
-                if '@' in masked_uri:
-                    parts = masked_uri.split('@')
-                    before_at = parts[0]
-                    if ':' in before_at:
-                        user_pass = before_at.split('://')[-1] if '://' in before_at else before_at
-                        if ':' in user_pass:
-                            user = user_pass.split(':')[0]
-                            masked_uri = masked_uri.replace(user_pass, f"{user}:****")
-                logger.info(f"✅ 【数据统计处理器】MongoDB 连接信息已读取: {masked_uri}")
-        except Exception as e:
-            logger.error(f"❌ 【数据统计处理器】无法获取 data_manager: {e}")
-            self.mongo_uri = None
-        # ========== MongoDB 连接信息读取完毕 ==========
-        
         logger.debug(f"✅ 【数据统计处理器】初始化完成")
         logger.debug(f"   - 时间差阈值: {TIME_DIFF_THRESHOLD} 秒")
         logger.debug(f"   - 杠杆倍数: {LEVERAGE}x")
@@ -294,8 +269,31 @@ class StatsHandler:
         Returns:
             平仓记录列表
         """
-        if not self.mongo_uri:
-            logger.error("❌ 【数据统计处理器】MONGODB_URI 未设置，无法查询")
+        # ===== 第一次被调用时才获取 MongoDB 连接字符串 =====
+        if not hasattr(self, '_mongo_uri'):
+            try:
+                data_manager = self.qd_server.brain.data_manager
+                self._mongo_uri = data_manager.get_database_config('mongodb_uri')
+                if not self._mongo_uri:
+                    logger.error("❌ 【数据统计处理器】MongoDB 连接信息为空")
+                    return []
+                else:
+                    # 隐藏密码打印
+                    masked_uri = self._mongo_uri
+                    if '@' in masked_uri:
+                        parts = masked_uri.split('@')
+                        before_at = parts[0]
+                        if ':' in before_at:
+                            user_pass = before_at.split('://')[-1] if '://' in before_at else before_at
+                            if ':' in user_pass:
+                                user = user_pass.split(':')[0]
+                                masked_uri = masked_uri.replace(user_pass, f"{user}:****")
+                    logger.info(f"✅ 【数据统计处理器】MongoDB 连接信息已获取: {masked_uri}")
+            except Exception as e:
+                logger.error(f"❌ 【数据统计处理器】获取 MongoDB 连接失败: {e}")
+                return []
+        
+        if not self._mongo_uri:
             return []
         
         logger.debug(f"📊 【数据统计处理器】连接 MongoDB...")
@@ -307,7 +305,7 @@ class StatsHandler:
             # 创建 MongoDB 客户端
             client = await loop.run_in_executor(
                 None,
-                lambda: MongoClient(self.mongo_uri, serverSelectionTimeoutMS=5000)
+                lambda: MongoClient(self._mongo_uri, serverSelectionTimeoutMS=5000)
             )
             
             db = client["trading_db"]
