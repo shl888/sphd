@@ -43,7 +43,7 @@
 MongoDB Atlas数据库
 
 【重要变化 - 从Turso迁移到MongoDB】
-1. 启动时不强制获取配置，等真正需要连接时才从 data_manager 获取
+1. 启动时不获取配置，等调度器第一次调用时才获取
 2. 连接方式从 aiohttp + SQL 改为 pymongo + run_in_executor
 3. 不再需要SQL语句，直接操作Python字典
 4. 数据格式完全不变，字段名、字段值原样存储
@@ -85,8 +85,13 @@ class Database:
     这个类负责所有数据库写入操作，不提供任何读取接口。
     所有方法都是私有的（_开头），对外只暴露 handle_data 一个入口。
     
+    【工作流程】
+    1. 启动 → __init__ + initialize 完成（不获取配置）
+    2. 等待 → 调度器调用 handle_data()
+    3. 干活 → 首次调用时获取配置、连接数据库、建索引
+    
     【MongoDB迁移说明】
-    - 启动时不获取配置，等调度器调用 handle_data 时才获取
+    - 启动时不获取配置，等调度器第一次调用时才获取
     - 使用 run_in_executor 将同步的pymongo操作包装成异步
     - 所有数据格式与原Turso版本完全一致
     - 中文字段名完美支持
@@ -101,7 +106,7 @@ class Database:
     def __init__(self):
         """
         初始化数据库
-        启动时不获取配置，等真正需要时才获取
+        启动时不获取配置
         """
         # ----- 延迟获取配置，不在启动时强制要求 -----
         self.mongo_uri = None
@@ -112,6 +117,9 @@ class Database:
         self._active = None  # active_positions 集合
         self._closed = None  # closed_positions 集合
         
+        # ----- 是否已初始化索引 -----
+        self._indexes_initialized = False
+        
         # ----- 初始化日志记录集合 -----
         self._logged_active_ids = set()
         
@@ -119,7 +127,15 @@ class Database:
         self._last_log_time = 0
         self._log_interval = 60
         
-        logger.info("✅ 【数据库】初始化完成，等待调度器调用...")
+        logger.info("✅ 【数据库】初始化完成")
+    
+    async def initialize(self):
+        """
+        异步初始化（启动时调用）
+        完全被动，不获取配置，不连接数据库
+        """
+        logger.info("✅ 【数据库】启动完成，等待调度器通知...")
+        # 什么都不做！
     
     async def _get_db(self):
         """
@@ -139,10 +155,11 @@ class Database:
                         logger.debug("✅ 【数据库】从 data_manager 获取 MongoDB 配置")
                 except Exception as e:
                     logger.error(f"❌ 【数据库】获取 MongoDB 配置失败: {e}")
-                    raise ConnectionError(f"无法获取 MongoDB 配置: {e}")
+                    return None
             
             if not self.mongo_uri:
-                raise ConnectionError("❌ 【数据库】MongoDB 连接信息未配置")
+                logger.warning("⏳ 【数据库】MongoDB 配置未就绪，等待密钥...")
+                return None
             
             logger.info("✅ 【数据库】MongoDB配置获取成功")
             
@@ -171,32 +188,17 @@ class Database:
                 
                 logger.info("✅ 【数据库】MongoDB连接成功")
                 
+                # 首次连接成功后初始化索引
+                if not self._indexes_initialized:
+                    await self._init_indexes()
+                    self._indexes_initialized = True
+                
             except Exception as e:
                 logger.error(f"❌ 【数据库】MongoDB连接失败: {e}")
-                raise ConnectionError(f"无法连接到MongoDB: {e}")
+                self._client = None
+                return None
         
         return self._db
-    
-    async def initialize(self):
-        """
-        异步初始化数据库连接和集合
-        ==================================================
-        - 建立连接
-        - 创建索引（集合会自动创建，只需要建索引）
-        - 验证连接是否成功
-        ==================================================
-        """
-        # ----- 测试数据库连接 -----
-        try:
-            db = await self._get_db()
-            logger.info("✅ 【数据库】连接测试成功")
-        except Exception as e:
-            raise ConnectionError(f"❌ 【数据库】无法连接到MongoDB: {e}")
-        
-        # ----- 初始化索引 -----
-        await self._init_indexes()
-        
-        logger.info("✅ 【数据库】异步初始化完成")
     
     async def close(self):
         """
@@ -217,6 +219,12 @@ class Database:
         接收调度器推送的数据 - 这是数据库文件的唯一入口
         """
         try:
+            # 确保数据库已连接
+            db = await self._get_db()
+            if db is None:
+                logger.warning("⏳ 【数据库】配置未就绪，跳过本次写入")
+                return
+            
             exchange = data.get('交易所')
             if not exchange:
                 logger.error("❌ 【数据库】数据中没有'交易所'字段，无法处理")
@@ -287,6 +295,9 @@ class Database:
         contract = data.get('开仓合约名', 'unknown')
         
         db = await self._get_db()
+        if db is None:
+            return
+        
         loop = asyncio.get_event_loop()
         
         # 检查是否首次写入（用于日志控制）
@@ -364,6 +375,9 @@ class Database:
         contract_name = clean_data.get('开仓合约名', 'unknown')
         
         db = await self._get_db()
+        if db is None:
+            return
+        
         loop = asyncio.get_event_loop()
         
         # ===== 第一层保护：代码层幂等性检查 =====
@@ -404,6 +418,9 @@ class Database:
         
         try:
             db = await self._get_db()
+            if db is None:
+                return False
+            
             loop = asyncio.get_event_loop()
             
             exists = await loop.run_in_executor(
@@ -436,6 +453,9 @@ class Database:
         
         try:
             db = await self._get_db()
+            if db is None:
+                return False
+            
             loop = asyncio.get_event_loop()
             
             exists = await loop.run_in_executor(
@@ -465,6 +485,9 @@ class Database:
             return
         
         db = await self._get_db()
+        if db is None:
+            return
+        
         loop = asyncio.get_event_loop()
         
         result = await loop.run_in_executor(
@@ -486,6 +509,9 @@ class Database:
         ==================================================
         """
         db = await self._get_db()
+        if db is None:
+            return []
+        
         loop = asyncio.get_event_loop()
         
         collections = await loop.run_in_executor(
@@ -502,6 +528,9 @@ class Database:
         """测试数据库连接是否正常"""
         try:
             db = await self._get_db()
+            if db is None:
+                return False
+            
             loop = asyncio.get_event_loop()
             
             # 发送ping命令测试连接
@@ -540,11 +569,10 @@ class Database:
         ==================================================
         """
         try:
-            # 先获取集合列表，用于调试
-            collections_before = await self._get_collections()
-            logger.debug(f"📋 【数据库】初始化前数据库中的集合: {collections_before}")
-            
             db = await self._get_db()
+            if db is None:
+                return
+            
             loop = asyncio.get_event_loop()
             
             # ==================== 持仓集合索引 ====================
@@ -591,12 +619,7 @@ class Database:
             )
             logger.debug("📝 【数据库】历史集合 平仓时间 索引创建完成")
             
-            # 验证集合是否存在
-            collections_after = await self._get_collections()
-            logger.debug(f"📋 【数据库】初始化后数据库中的集合: {collections_after}")
-            
             logger.info("✅ 【数据库】MongoDB索引初始化完成（id字段已设为唯一）")
             
         except Exception as e:
             logger.error(f"❌ 【数据库】索引初始化失败: {e}")
-            raise
