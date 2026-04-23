@@ -473,6 +473,36 @@ async def main():
             logger.error(f"❌ 启动币安24h涨跌幅数据管理器失败: {e}")
         
         # ==================== 18. 完成初始化 ====================
+        
+        # ========== 注册密钥使用者到标签调度器 ==========
+        logger.info("【📋】注册密钥使用者到标签调度器...")
+        key_consumers = []
+        
+        # 数据库使用者有2个（调度器是老板，管 database + 两个修复区）
+        if hasattr(brain, 'data_scheduler') and brain.data_scheduler:
+            key_consumers.append(brain.data_scheduler)
+        # 统计功能使用者（qd_server 是老板，管 stats_handler）
+        if hasattr(brain, 'frontend_relay') and brain.frontend_relay:
+            key_consumers.append(brain.frontend_relay)
+        
+        # API使用者（4个）
+        if hasattr(brain, 'private_pool') and brain.private_pool:
+            key_consumers.append(brain.private_pool)
+        if hasattr(brain, 'token_manager') and brain.token_manager:
+            key_consumers.append(brain.token_manager)
+        if hasattr(brain, 'private_fetcher') and brain.private_fetcher:
+            key_consumers.append(brain.private_fetcher)
+        if hasattr(brain, 'trader') and brain.trader:
+            key_consumers.append(brain.trader)
+        
+        # 注册到标签调度器
+        if brain.tag_dispatcher:
+            brain.tag_dispatcher.register_key_consumers(key_consumers)
+            logger.info(f"✅ 已注册 {len(key_consumers)} 个密钥使用者到标签调度器")
+        else:
+            logger.warning("⚠️ 标签调度器未初始化，无法注册密钥使用者")
+        # ================================================
+        
         brain.running = True
         logger.info("=" * 60)
         logger.info("🎉 所有模块初始化完成！")
@@ -596,3 +626,4 @@ if __name__ == "__main__":
     print("🚨🚨🚨 进入 __main__", file=sys.stderr)
     sys.stderr.flush()
     asyncio.run(main())
+    
