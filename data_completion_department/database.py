@@ -43,7 +43,7 @@
 MongoDB Atlas数据库
 
 【重要变化 - 从Turso迁移到MongoDB】
-1. 通过全局大脑实例获取 data_manager，再从 data_manager 获取数据库连接字符串
+1. 启动时不强制获取配置，等真正需要连接时才从 data_manager 获取
 2. 连接方式从 aiohttp + SQL 改为 pymongo + run_in_executor
 3. 不再需要SQL语句，直接操作Python字典
 4. 数据格式完全不变，字段名、字段值原样存储
@@ -57,7 +57,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from pymongo import MongoClient
-from pymongo.errors import DuplicateKeyError, ConnectionFailure
+from pymongo.errors import DuplicateKeyError
 
 # 配置日志 - 统一前缀
 logger = logging.getLogger(__name__)
@@ -86,6 +86,7 @@ class Database:
     所有方法都是私有的（_开头），对外只暴露 handle_data 一个入口。
     
     【MongoDB迁移说明】
+    - 启动时不获取配置，等调度器调用 handle_data 时才获取
     - 使用 run_in_executor 将同步的pymongo操作包装成异步
     - 所有数据格式与原Turso版本完全一致
     - 中文字段名完美支持
@@ -99,44 +100,11 @@ class Database:
     
     def __init__(self):
         """
-        初始化数据库连接
-        通过全局大脑实例获取 data_manager，再从 data_manager 获取数据库连接字符串
+        初始化数据库
+        启动时不获取配置，等真正需要时才获取
         """
-        # ----- 第1步：获取全局大脑实例 -----
-        try:
-            from smart_brain import get_brain_instance
-            brain = get_brain_instance()
-            if brain is None:
-                raise ValueError(
-                    "❌ 【数据库】大脑实例尚未初始化\n"
-                    "请确保在创建 Database 之前已调用 set_brain_instance()"
-                )
-            
-            data_manager = brain.data_manager
-            self.mongo_uri = data_manager.get_database_config('mongodb_uri')
-            logger.debug("✅ 【数据库】从 data_manager 获取 MongoDB 配置")
-            
-        except ImportError as e:
-            raise ImportError(
-                f"❌ 【数据库】无法导入 smart_brain 模块: {e}\n"
-                "请确保 smart_brain 模块在 Python 路径中"
-            )
-        except AttributeError as e:
-            raise AttributeError(
-                f"❌ 【数据库】大脑实例结构异常: {e}\n"
-                "请确保 brain.data_manager 已正确初始化"
-            )
-        
-        # ----- 第2步：验证配置是否存在 -----
-        if not self.mongo_uri:
-            raise ValueError(
-                "❌ 【数据库】MongoDB 连接信息未配置\n"
-                "请确保 data_manager 中已存入 mongodb_uri\n"
-                "调用方式: data_manager.set_database_config('mongodb_uri', '你的连接字符串')"
-            )
-        
-        logger.info("✅ 【数据库】MongoDB配置加载成功")
-        logger.debug(f"🔗 【数据库】连接URI已加载")
+        # ----- 延迟获取配置，不在启动时强制要求 -----
+        self.mongo_uri = None
         
         # ----- MongoDB客户端对象（懒加载）-----
         self._client = None
@@ -146,25 +114,38 @@ class Database:
         
         # ----- 初始化日志记录集合 -----
         self._logged_active_ids = set()
-        logger.info("✅ 【数据库】日志控制集合初始化完成")
         
         # ----- 初始化最后日志时间记录 -----
         self._last_log_time = 0
         self._log_interval = 60
-        logger.info(f"✅ 【数据库】日志时间控制初始化完成，间隔{self._log_interval}秒")
+        
+        logger.info("✅ 【数据库】初始化完成，等待调度器调用...")
     
     async def _get_db(self):
         """
         获取MongoDB数据库连接（懒加载）
         ==================================================
-        【MongoDB迁移核心】
-        使用 run_in_executor 将同步的MongoDB操作包装成异步
-        确保与原代码的异步风格兼容
-        
-        首次调用时建立连接，后续直接返回已存在的连接
+        首次调用时才从 data_manager 获取配置并建立连接
         ==================================================
         """
         if self._client is None:
+            # 延迟获取配置
+            if not self.mongo_uri:
+                try:
+                    from smart_brain import get_brain_instance
+                    brain = get_brain_instance()
+                    if brain and brain.data_manager:
+                        self.mongo_uri = brain.data_manager.get_database_config('mongodb_uri')
+                        logger.debug("✅ 【数据库】从 data_manager 获取 MongoDB 配置")
+                except Exception as e:
+                    logger.error(f"❌ 【数据库】获取 MongoDB 配置失败: {e}")
+                    raise ConnectionError(f"无法获取 MongoDB 配置: {e}")
+            
+            if not self.mongo_uri:
+                raise ConnectionError("❌ 【数据库】MongoDB 连接信息未配置")
+            
+            logger.info("✅ 【数据库】MongoDB配置获取成功")
+            
             loop = asyncio.get_event_loop()
             try:
                 # 在线程池中执行同步的MongoDB连接
@@ -200,7 +181,6 @@ class Database:
         """
         异步初始化数据库连接和集合
         ==================================================
-        【MongoDB迁移】
         - 建立连接
         - 创建索引（集合会自动创建，只需要建索引）
         - 验证连接是否成功
@@ -620,18 +600,3 @@ class Database:
         except Exception as e:
             logger.error(f"❌ 【数据库】索引初始化失败: {e}")
             raise
-
-
-# ==================== 旧方法移除说明 ====================
-"""
-【已移除的方法 - 不再需要】
-
-以下方法在原Turso版本中存在，MongoDB版本不再需要：
-
-1. _run_sql() - MongoDB不使用SQL语句，直接操作字典
-2. _create_active_positions_table() - 集合自动创建，不需要建表语句
-3. _create_closed_positions_table() - 同上
-4. _create_indexes() - 已合并到 _init_indexes()
-
-所有数据库操作都通过 pymongo 的API直接完成，不再需要拼接SQL。
-"""
