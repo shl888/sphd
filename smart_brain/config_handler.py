@@ -8,6 +8,7 @@
 
 import os
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ class ConfigHandler:
             from smart_brain import get_brain_instance
             brain = get_brain_instance()
             if brain and brain.tag_dispatcher:
-                brain.tag_dispatcher.receive({"info": "密钥已就绪"})
+                # 异步发送标签
+                asyncio.create_task(brain.tag_dispatcher.receive({"info": "密钥已就绪"}))
                 logger.info("📢【配置处理器】已发送「密钥已就绪」标签给调度器")
             else:
                 logger.warning("⚠️【配置处理器】TagDispatcher 未初始化，无法发送标签")
