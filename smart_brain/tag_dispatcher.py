@@ -26,7 +26,7 @@ class TagDispatcher:
     工作流程：
     1. 接收带 info 字段的标签数据
     2. 根据标签内容匹配转发目标列表
-    3. 遍历目标列表，调用每个工人的 on_data() 方法
+    3. 遍历目标列表，执行发送动作
     """
     
     def __init__(
@@ -44,14 +44,17 @@ class TagDispatcher:
             open_worker: 半自动开仓工人
             funding_sltp: 资金费套利 - 止损止盈工人
             funding_close: 资金费套利 - 清仓工人
-            spread_sltp: 价差套利 - 止损止盈工人（暂未实现）
-            spread_close: 价差套利 - 清仓工人（暂未实现）
+            spread_sltp: 价差套利 - 止损止盈工人
+            spread_close: 价差套利 - 清仓工人
         """
         self.open_worker = open_worker
         self.funding_sltp = funding_sltp
         self.funding_close = funding_close
         self.spread_sltp = spread_sltp
         self.spread_close = spread_close
+        
+        # 密钥使用者列表（API和数据库使用者）
+        self.key_consumers: List[Any] = []
         
         # 标签路由表（值可以是单个工人属性名，也可以是列表）
         self._route_table = self._build_route_table()
@@ -71,14 +74,24 @@ class TagDispatcher:
             "币安杠杆设置成功": "open_worker",
             
             # 开仓成功 → 两套策略的止损止盈工人（广播）
-            "欧易开仓成功": ["funding_sltp","spread_sltp"],  
-            "币安开仓成功": ["funding_sltp","spread_sltp"],  
+            "欧易开仓成功": ["funding_sltp", "spread_sltp"],  
+            "币安开仓成功": ["funding_sltp", "spread_sltp"],  
             
             # ========== 策略标签（广播给两套策略的止损止盈和清仓工人） ==========
             # 等价差工人实现后，把注释去掉
             "当前策略:资金费套利": ["funding_sltp", "funding_close"],
-            "当前策略:价差套利": ["spread_sltp",     "spread_close"],
+            "当前策略:价差套利": ["spread_sltp", "spread_close"],
         }
+    
+    def register_key_consumers(self, consumers: List[Any]) -> None:
+        """
+        注册密钥使用者（由启动文件调用）
+        
+        参数:
+            consumers: 密钥使用者列表
+        """
+        self.key_consumers = consumers
+        logger.info(f"📋【标签调度器】已注册 {len(consumers)} 个密钥使用者")
     
     async def receive(self, tag_data: Dict[str, Any]) -> None:
         """
@@ -92,6 +105,25 @@ class TagDispatcher:
         if not info:
             logger.warning(f"⚠️【标签调度器】收到的数据没有 info 字段: {tag_data}")
             return
+        
+        # ========== 特殊处理：密钥已就绪标签 ==========
+        if info == "密钥已就绪":
+            if not self.key_consumers:
+                logger.warning("⚠️【标签调度器】收到「密钥已就绪」标签，但没有注册的密钥使用者")
+                return
+            
+            for consumer in self.key_consumers:
+                try:
+                    # 执行发送动作：调用使用者的 on_keys_ready() 方法
+                    if hasattr(consumer, 'on_keys_ready'):
+                        consumer.on_keys_ready()
+                        logger.info(f"📤【标签调度器】「密钥已就绪」已发送: {type(consumer).__name__}")
+                    else:
+                        logger.warning(f"⚠️【标签调度器】使用者没有 on_keys_ready 方法: {type(consumer).__name__}")
+                except Exception as e:
+                    logger.error(f"❌【标签调度器】发送「密钥已就绪」失败: {type(consumer).__name__}, 错误: {e}")
+            return
+        # ==========================================
         
         # 查找路由
         target = self._route_table.get(info)
@@ -116,12 +148,12 @@ class TagDispatcher:
                 logger.warning(f"⚠️【标签调度器】目标工人未初始化: {worker_attr}")
                 continue
             
-            # 转发标签给工人（单向发送，不等待）
+            # 执行发送动作给工人
             try:
                 worker.on_data(tag_data)
-                logger.info(f"📤【标签调度器】标签已转发: {info} → {worker_attr}")
+                logger.info(f"📤【标签调度器】标签已发送: {info} → {worker_attr}")
             except Exception as e:
-                logger.error(f"❌【标签调度器】转发标签失败: {info} → {worker_attr}, 错误: {e}")
+                logger.error(f"❌【标签调度器】发送标签失败: {info} → {worker_attr}, 错误: {e}")
     
     def update_workers(
         self,

@@ -48,6 +48,18 @@ class ConfigHandler:
         
         self._credentials_loaded = True
         logger.info("✅【配置处理器】所有环境变量凭证加载完成")
+        
+        # ========== 发送标签给 TagDispatcher ==========
+        try:
+            from smart_brain import get_brain_instance
+            brain = get_brain_instance()
+            if brain and brain.tag_dispatcher:
+                brain.tag_dispatcher.receive({"info": "密钥已就绪"})
+                logger.info("📢【配置处理器】已发送「密钥已就绪」标签给调度器")
+            else:
+                logger.warning("⚠️【配置处理器】TagDispatcher 未初始化，无法发送标签")
+        except Exception as e:
+            logger.error(f"❌【配置处理器】发送标签失败: {e}")
     
     def set_config(self, config_content: str):
         """接收前端发来的配置内容"""
