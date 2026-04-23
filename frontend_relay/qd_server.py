@@ -212,18 +212,15 @@ class FrontendRelayServer:
                                                 self.stats["commands_processed"] += 1
                                             
                                             elif msg_type == 'config':
-                                                logger.info(f"💾【客户端】收到配置指令，转发给 ConfigHandler")
+                                                logger.info(f"💾【客户端】收到配置指令，转发给 配置处理器")
                                                 logger.debug(f"   客户端: {client_id}")
                                                 
-                                                try:
-                                                    from smart_brain import get_config_handler
-                                                    config_handler = get_config_handler()
-                                                    if config_handler:
-                                                        config_handler.set_config(data2.get('data', ''))
-                                                    else:
-                                                        logger.error(f"❌【客户端】ConfigHandler 实例未初始化")
-                                                except Exception as e:
-                                                    logger.error(f"❌【客户端】转发配置指令失败: {e}")
+                                                from smart_brain import get_config_handler
+                                                config_handler = get_config_handler()
+                                                if config_handler:
+                                                    config_handler.set_config(data2.get('data', ''))
+                                                else:
+                                                    logger.error(f"❌【客户端】配置处理器 实例未初始化")
                                             
                                             elif msg_type == 'set_trade_mode':
                                                 logger.debug(f"🎮【客户端】收到交易模式指令，转发给大脑")
