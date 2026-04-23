@@ -70,7 +70,48 @@ class Trader:
         self._last_cleanup_time = 0
         self._cleanup_lock = asyncio.Lock()
         
+        # ========== 密钥就绪标志 ==========
+        self._keys_ready = False
+        self._pending_work = False
+        
         logger.info(f"👷【下单工人】初始化完成 | 模式: {'模拟交易' if use_sandbox else '真实交易'}")
+    
+    # ==================== 标签接收 ====================
+    
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【下单工人】密钥已就绪，获得工作权限")
+        
+        if self._pending_work:
+            self._pending_work = False
+            self._start_work()
+            logger.info("🚀【下单工人】开始执行待处理的工作")
+    
+    def _start_work(self):
+        """实际执行工作任务"""
+        self._running = True
+        logger.info("👷【下单工人】启动，等待接收订单...")
+        
+        asyncio.create_task(self._binance_time_sync_loop())
+        asyncio.create_task(self._okx_time_sync_loop())
+        asyncio.create_task(self._main_loop())
+    
+    async def _main_loop(self):
+        """主循环"""
+        while self._running:
+            try:
+                orders = await self._order_queue.get()
+                asyncio.create_task(self._process_orders(orders))
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"❌【下单工人】主循环异常: {e}")
+        
+        logger.info("👷【下单工人】已停止")
     
     # ========== 对外接口（给大脑用） ==========
     
@@ -87,22 +128,11 @@ class Trader:
     
     async def start(self):
         """启动工人"""
-        self._running = True
-        logger.info("👷【下单工人】启动，等待接收订单...")
-        
-        asyncio.create_task(self._binance_time_sync_loop())
-        asyncio.create_task(self._okx_time_sync_loop())
-        
-        while self._running:
-            try:
-                orders = await self._order_queue.get()
-                asyncio.create_task(self._process_orders(orders))
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"❌【下单工人】主循环异常: {e}")
-        
-        logger.info("👷【下单工人】已停止")
+        if self._keys_ready:
+            self._start_work()
+        else:
+            logger.info("⏳【下单工人】密钥未就绪，等待标签...")
+            self._pending_work = True
     
     async def stop(self):
         """停止工人"""
