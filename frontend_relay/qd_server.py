@@ -327,7 +327,7 @@ class FrontendRelayServer:
                                                 logger.debug(f"   请求参数: {data2}")
                                                 logger.debug(f"   客户端: {client_id}")
                                                 
-                                                # ===== 1.5 检查密钥是否就绪 =====
+                                                # ===== 检查密钥是否就绪 =====
                                                 if not self._keys_ready:
                                                     logger.warning("⏳【客户端】密钥未就绪，无法处理统计请求")
                                                     await ws.send_json({
@@ -342,12 +342,13 @@ class FrontendRelayServer:
                                                         },
                                                         "timestamp": time.time()
                                                     })
-                                                    return
+                                                else:
+                                                    logger.debug(f"📤【客户端】转发统计指令给 StatsHandler 处理...")
+                                                    await self.stats_handler.handle(data2)
+                                                    logger.info(f"✅【客户端】统计指令已转发给 StatsHandler")
                                                 # =================================
                                                 
-                                                logger.debug(f"📤【客户端】转发统计指令给 StatsHandler 处理...")
-                                                await self.stats_handler.handle(data2)
-                                                logger.info(f"✅【客户端】统计指令已转发给 StatsHandler")
+                                                continue
                                             # ========== 统计指令处理结束 ==========
                                             
                                             # ========== 信息标签处理 ==========
