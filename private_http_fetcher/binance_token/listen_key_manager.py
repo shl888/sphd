@@ -44,9 +44,34 @@ class ListenKeyManager:
             'default': ('retry_same', 10, '临时错误')
         }
         
+        # ========== 密钥就绪标志（1.5） ==========
+        self._keys_ready = False
+        self._pending_work = False
+        
         logger.info("🔑 ListenKey管理器初始化完成（推送模式）")
     
-    # ==================== 核心维护循环 ====================
+    # ==================== 标签接收（1.5） ====================
+    
+    def on_keys_ready(self):
+        """
+        接收「密钥已就绪」标签
+        由 TagDispatcher 调用
+        """
+        self._keys_ready = True
+        logger.info("🔑【ListenKey管理器】密钥已就绪，获得工作权限")
+        
+        if self._pending_work:
+            self._pending_work = False
+            self._start_work()
+            logger.info("🚀【ListenKey管理器】开始执行待处理的工作")
+    
+    def _start_work(self):
+        """实际执行工作任务（2）"""
+        logger.info("🚀 启动ListenKey管理服务...")
+        self.maintenance_task = asyncio.create_task(self._maintenance_loop())
+        logger.info("✅ ListenKey管理服务已启动")
+    
+    # ==================== 启动方法（1 + 1.5） ====================
     
     async def start(self) -> bool:
         """启动ListenKey管理服务"""
@@ -54,13 +79,17 @@ class ListenKeyManager:
             logger.warning("ListenKey管理服务已在运行")
             return True
         
-        logger.info("🚀 启动ListenKey管理服务...")
+        # ===== 1（启动，原封不动）=====
         self.running = True
+        logger.info("🚀 ListenKey管理服务初始化完成")
         
-        # 启动维护循环
-        self.maintenance_task = asyncio.create_task(self._maintenance_loop())
+        # ===== 1.5（新增检查）=====
+        if self._keys_ready:
+            self._start_work()
+        else:
+            self._pending_work = True
+            logger.info("⏳【ListenKey管理器】密钥未就绪，等待标签...")
         
-        logger.info("✅ ListenKey管理服务已启动")
         return True
     
     async def stop(self):
@@ -76,6 +105,8 @@ class ListenKeyManager:
                 pass
         
         logger.info("✅ ListenKey管理服务已停止")
+    
+    # ==================== 核心维护循环（2） ====================
     
     async def _maintenance_loop(self):
         """基于时间戳的精确续期循环"""
@@ -513,6 +544,8 @@ class ListenKeyManager:
         """获取管理器状态"""
         status = {
             'running': self.running,
+            'keys_ready': self._keys_ready,
+            'pending_work': self._pending_work,
             'last_token_time': self.last_token_time.isoformat() if self.last_token_time else None,
             'current_key': await self.brain.get_listen_key('binance'),
             'config': {
