@@ -9,7 +9,7 @@
 工作流程：
 1. 收到标签 {"info": "开启全自动"} → 缓存
 2. 收到标签 {"info": "当前策略:价差套利"} → 缓存
-3. 两个标签齐了 → 立刻启动
+3. 两个标签齐了 → 等待 2 秒（确保双边开仓都已完成）→ 启动
 4. 执行准备阶段（步骤1-3），创建平仓参数副本
 5. 进入监控阶段（步骤4-5），循环检测清仓条件
 6. 任一条件触发 → 发送副本 → 清空缓存（保留全自动标签，清除策略标签）→ 回到准备阶段
@@ -87,10 +87,16 @@ class SpreadClose:
             self._deactivate()
             return
         
-        # 两个标签都齐了，且监控任务还没启动
+        # 两个标签都齐了，且监控任务还没启动 → 等待 2 秒后启动
         if self.auto_mode_active and self.spread_strategy_active:
             if self.monitor_task is None:
-                self._activate()
+                asyncio.create_task(self._delayed_activate())
+    
+    async def _delayed_activate(self):
+        """延迟 2 秒后激活监控，确保双边开仓都已完成"""
+        await asyncio.sleep(2)
+        if self.auto_mode_active and self.spread_strategy_active:
+            self._activate()
     
     def _activate(self):
         """激活，立刻开始监控"""
