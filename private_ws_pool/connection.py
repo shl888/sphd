@@ -156,11 +156,10 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         self.last_probe_sent = None
         self.waiting_for_probe = False
         
-        # 服务器配置
-        self.ws_url = f"wss://fstream.binancefuture.com/ws/{listen_key}"
+        # 服务器配置 - 使用新 private 专用地址
+        self.ws_url = f"wss://fstream.binance.com/private/ws/{listen_key}"
         self.backup_servers = [
-            f"wss://fstream.binancefuture.com/ws/{listen_key}",
-            f"wss://fstream.binance.com/ws/{listen_key}",
+            f"wss://fstream.binance.com/private/ws/{listen_key}",
         ]
         self.current_server_index = 0
         
