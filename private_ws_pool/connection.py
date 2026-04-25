@@ -156,14 +156,14 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         self.last_probe_sent = None
         self.waiting_for_probe = False
         
-        # 服务器配置 - 使用新 private 专用地址，显式声明订阅事件
-        events = "ORDER_TRADE_UPDATE,ACCOUNT_UPDATE,ACCOUNT_CONFIG_UPDATE,ALGO_UPDATE"
-        self.ws_url = f"wss://fstream.binance.com/private/ws?listenKey={listen_key}&events={events}"
+        # 服务器配置
+        self.ws_url = f"wss://fstream.binancefuture.com/ws/{listen_key}"
         self.backup_servers = [
-            f"wss://fstream.binance.com/private/ws?listenKey={listen_key}&events={events}",
+            f"wss://fstream.binancefuture.com/ws/{listen_key}",
+            f"wss://fstream.binance.com/ws/{listen_key}",
         ]
         self.current_server_index = 0
-
+        
         logger.info(f"[私人连接池] 币安私人 初始化完成（主动探测模式，间隔{self.probe_interval}秒）")
     
     async def connect(self):
