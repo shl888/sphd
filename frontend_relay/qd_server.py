@@ -40,9 +40,12 @@ class FrontendRelayServer:
         self._token_enc = os.getenv('FRONTEND_TOKEN')
         self.valid_token = None  # 解密后才会有值
         
-        # 连接锁定
-        self._connection_locked = False
+        # 【核心改动】只用 current_client_id 判断是否有连接，删掉 _connection_locked
         self.current_client_id = None
+        
+        # 心跳超时：60秒没收到 ping 就认为连接已死
+        self._heartbeat_timeout = 60
+        self._last_ping_time = 0
         
         # 失败次数限制
         self._failed_attempts: Dict[str, int] = {}
@@ -129,6 +132,14 @@ class FrontendRelayServer:
         
         return plaintext.decode('utf-8')
     
+    # ==================== 心跳超时检测 ====================
+    
+    def _is_current_client_dead(self) -> bool:
+        """检查当前连接是否已死（超过心跳超时）"""
+        if self.current_client_id is None:
+            return False
+        return time.time() - self._last_ping_time > self._heartbeat_timeout
+    
     # ==================== 踢掉其他连接 ====================
     
     async def _kick_all_other_clients(self, keep_client_id: str):
@@ -167,12 +178,21 @@ class FrontendRelayServer:
         client_ip = request.remote
         client_id = f"qd_{client_ip}_{int(time.time())}"
         
-        # ===== 检查是否已锁定 =====
-        if self._connection_locked:
-            logger.warning(f"🔒【客户端】已有活动连接，拒绝新连接: {client_id}")
-            await ws.send_json({"type": "error", "error": "已有其他客户端连接"})
-            await ws.close()
-            return ws
+        # ===== 【核心改动】检查是否已有连接，包括僵尸连接检测 =====
+        if self.current_client_id is not None:
+            # 先检查是不是僵尸连接
+            if self._is_current_client_dead():
+                logger.warning(f"🧹【客户端】检测到僵尸连接 [{self.current_client_id}]，强制清理，允许新连接: {client_id}")
+                self.current_client_id = None
+                self.valid_token = None
+            else:
+                logger.warning(f"🔒【客户端】已有活动连接 [{self.current_client_id}]，拒绝新连接: {client_id}")
+                try:
+                    await ws.send_json({"type": "error", "error": "已有其他客户端连接"})
+                except:
+                    pass
+                await ws.close()
+                return ws
         # ========================
         
         client_info = {
@@ -224,12 +244,24 @@ class FrontendRelayServer:
                             try:
                                 decrypted_token = self._decrypt(self._token_enc, password)
                                 
-                                # 解密成功！
+                                # 【核心改动】再次检查是否已有连接（防止并发竞争）
+                                if self.current_client_id is not None:
+                                    if self._is_current_client_dead():
+                                        logger.warning(f"🧹【客户端】认证时检测到僵尸连接，强制清理")
+                                        self.current_client_id = None
+                                        self.valid_token = None
+                                    else:
+                                        logger.warning(f"🔒【客户端】认证时已有其他连接 [{self.current_client_id}]，拒绝: {client_id}")
+                                        await ws.send_json({"type": "error", "error": "已有其他客户端连接"})
+                                        await ws.close()
+                                        return ws
+                                
+                                # 解密成功！占用连接
                                 self.valid_token = decrypted_token
-                                self._connection_locked = True
                                 self.current_client_id = client_id
                                 client_info['authenticated'] = True
                                 auth_received = True
+                                self._last_ping_time = time.time()  # 初始化心跳时间
                                 
                                 # 清除该IP的失败记录
                                 if client_ip in self._failed_attempts:
@@ -244,7 +276,7 @@ class FrontendRelayServer:
                                     "client_id": client_id,
                                     "timestamp": time.time()
                                 })
-                                logger.info(f"✅【客户端】客户端认证成功: {client_id}")
+                                logger.info(f"✅【客户端】客户端认证成功并占用连接: {client_id}")
                                 
                                 # 认证成功后进入正常消息循环
                                 async for msg2 in ws:
@@ -254,6 +286,7 @@ class FrontendRelayServer:
                                             msg_type = data2.get('type')
                                             
                                             if msg_type == 'ping':
+                                                self._last_ping_time = time.time()
                                                 logger.debug(f"💓【客户端】收到心跳 ping，客户端: {client_id}")
                                                 await ws.send_json({
                                                     "type": "pong",
@@ -370,6 +403,8 @@ class FrontendRelayServer:
                                     elif msg2.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
                                         logger.info(f"🔌【客户端】WebSocket 连接关闭或出错，客户端: {client_id}")
                                         break
+                                
+                                # 内层循环结束，跳出外层循环
                                 break
                                 
                             except Exception as e:
@@ -416,19 +451,20 @@ class FrontendRelayServer:
             logger.debug(f"WebSocket异常 {client_id}: {e}")
         
         finally:
-            # 4. 清理连接
+            # 4. 【核心改动】统一清理：无论什么原因离开，都清掉自己
             if client_info in self.ws_clients:
                 self.ws_clients.remove(client_info)
                 self.stats["current_connections"] = len(self.ws_clients)
-                
-                # 如果是当前活动连接断开，解锁
-                if client_id == self.current_client_id:
-                    self._connection_locked = False
-                    self.current_client_id = None
-                    self.valid_token = None
-                    logger.info("🔓【客户端】连接断开，已解锁，可接受新连接")
-                
-                logger.info(f"🔌【客户端】连接断开，已清理: {client_id} (剩余连接数: {len(self.ws_clients)})")
+            
+            # 【核心改动】无条件释放连接权，不判断 client_id 是否相等
+            # 因为同一时间只有一个连接能成功，不会误杀
+            if self.current_client_id is not None:
+                released_id = self.current_client_id
+                self.current_client_id = None
+                self.valid_token = None
+                logger.info(f"🔓【客户端】连接断开，释放连接权: {released_id} → None")
+            
+            logger.info(f"🔌【客户端】连接断开，已清理: {client_id} (剩余连接数: {len(self.ws_clients)})")
         
         return ws
     
@@ -499,6 +535,11 @@ class FrontendRelayServer:
         authenticated = len([c for c in self.ws_clients if c.get('authenticated', False)])
         unauthenticated = len(self.ws_clients) - authenticated
         
+        # 【核心改动】检查僵尸连接
+        zombie_detected = False
+        if self.current_client_id is not None and self._is_current_client_dead():
+            zombie_detected = True
+        
         logger.debug(f"📊【客户端】状态查询，已认证: {authenticated}，未认证: {unauthenticated}")
         
         return web.json_response({
@@ -513,8 +554,9 @@ class FrontendRelayServer:
                 "authenticated": authenticated,
                 "unauthenticated": unauthenticated
             },
-            "connection_locked": self._connection_locked,
             "current_client": self.current_client_id,
+            "zombie_detected": zombie_detected,
+            "last_ping_ago": time.time() - self._last_ping_time if self.current_client_id else None,
             "auth_enabled": True,
             "timestamp": time.time()
         })
@@ -700,6 +742,12 @@ class FrontendRelayServer:
             logger.info(f"🧹【客户端】【清理连接】清理 {len(dead_clients)} 个死连接")
             for client in dead_clients:
                 if client in self.ws_clients:
+                    # 【关键补充】如果死的是当前持有连接权的客户端，释放锁
+                    dead_client_id = client.get('client_id')
+                    if dead_client_id == self.current_client_id:
+                        logger.info(f"🔓【客户端】【广播清理】当前客户端已死，释放连接权: {self.current_client_id} → None")
+                        self.current_client_id = None
+                        self.valid_token = None
                     self.ws_clients.remove(client)
             self.stats["current_connections"] = len(self.ws_clients)
         
@@ -783,6 +831,12 @@ class FrontendRelayServer:
             except:
                 pass
         self.ws_clients.clear()
+        
+        # 【核心改动】清空连接权
+        self.current_client_id = None
+        self.valid_token = None
+        logger.info(f"🔓【客户端】已释放连接权")
+        
         logger.info(f"🔌【客户端】已关闭所有 WebSocket 连接")
         
         # 停止HTTP服务器
@@ -799,6 +853,11 @@ class FrontendRelayServer:
         
         authenticated = len([c for c in self.ws_clients if c.get('authenticated', False)])
         
+        # 【核心改动】检查僵尸连接
+        zombie_detected = False
+        if self.current_client_id is not None and self._is_current_client_dead():
+            zombie_detected = True
+        
         return {
             "running": self.runner is not None,
             "port": self.port,
@@ -807,7 +866,9 @@ class FrontendRelayServer:
             "total_connections": self.stats["total_connections"],
             "messages_broadcast": self.stats["messages_broadcast"],
             "commands_processed": self.stats["commands_processed"],
-            "connection_locked": self._connection_locked,
+            "current_client": self.current_client_id,
+            "zombie_detected": zombie_detected,
+            "last_ping_ago": time.time() - self._last_ping_time if self.current_client_id else None,
             "uptime_seconds": uptime,
             "auth_enabled": True
         }
