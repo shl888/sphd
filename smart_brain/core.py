@@ -171,7 +171,10 @@ class SmartBrain:
             
             # 7. 创建下单工人
             from http_server.trader import Trader
-            self.trader = Trader(self, use_sandbox=True)
+            #控制下单工人的开关，True为模拟交易，False为真实交易
+#            self.trader = Trader(self, use_sandbox=True)
+            self.trader = Trader(self, use_sandbox=False)  
+            
             # 将标签调度器注入给下单工人
             self.trader.tag_dispatcher = self.tag_dispatcher
             asyncio.create_task(self.trader.start())
