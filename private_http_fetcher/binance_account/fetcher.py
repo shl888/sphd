@@ -96,10 +96,11 @@ class PrivateHTTPFetcher:
         }
 
         # ==================== API 配置 ====================
-        # 模拟交易端点（Testnet）
-        self.BASE_URL = "https://testnet.binancefuture.com"
-        # 真实交易端点（正式环境取消注释）
-        # self.BASE_URL = "https://fapi.binance.com"
+        # 模拟交易端点（Testnet，模拟环境启用）
+#        self.BASE_URL = "https://testnet.binancefuture.com"
+
+        # 真实交易端点（正式环境启用）
+        self.BASE_URL = "https://fapi.binance.com"
 
         self.ACCOUNT_ENDPOINT = "/fapi/v3/account"
         self.RECV_WINDOW = 5000  # 5秒接收窗口
