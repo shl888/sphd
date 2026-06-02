@@ -380,10 +380,16 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
         self.api_secret = api_secret
         self.passphrase = passphrase
         
-        # 欧意模拟交易地址
-        self.ws_url = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
-        self.broker_id = "9999"
+        # 欧意模拟交易地址（已注释，保留代码）
+#        self.ws_url = "wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999"
+#        self.backup_url = "wss://ws.okx.com:8443/ws/v5/private"
+
+        # 【实盘地址 - 当前使用】
+        self.ws_url = "wss://ws.okx.com:8443/ws/v5/private"
         self.backup_url = "wss://ws.okx.com:8443/ws/v5/private"
+        
+        # broker_id 保留（订阅时使用，实盘会被忽略，但不影响运行）
+        self.broker_id = "9999"
         
         # 主动模式参数
         self.authenticated = False
