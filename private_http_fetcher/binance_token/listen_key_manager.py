@@ -28,8 +28,12 @@ class ListenKeyManager:
         self.renewal_interval = 25 * 60  # 25分钟 = 1500秒
         self.api_check_interval = 5  # 5秒检查API
         
-        # HTTP配置
-        self.binance_testnet_url = "https://testnet.binancefuture.com/fapi/v1/listenKey"
+        # HTTP地址配置
+        # 【模拟盘地址 - 已注释保留】
+#        self.binance_testnet_url = "https://testnet.binancefuture.com/fapi/v1/listenKey"
+        
+        # 【实盘地址 - 当前使用】
+        self.binance_mainnet_url = "https://fapi.binance.com/fapi/v1/listenKey"
         
         # 重试配置
         self.max_token_retries = 3
@@ -435,7 +439,7 @@ class ListenKeyManager:
     async def _get_binance_listen_key(self, api_key: str) -> Dict[str, Any]:
         """直接HTTP获取币安listenKey"""
         try:
-            url = self.binance_testnet_url
+            url = self.binance_mainnet_url
             headers = {"X-MBX-APIKEY": api_key}
             
             async with aiohttp.ClientSession() as session:
@@ -482,7 +486,7 @@ class ListenKeyManager:
     async def _keep_alive_binance_key(self, api_key: str, listen_key: str) -> Dict[str, Any]:
         """直接HTTP延长币安listenKey有效期"""
         try:
-            url = self.binance_testnet_url
+            url = self.binance_mainnet_url
             headers = {"X-MBX-APIKEY": api_key}
             
             async with aiohttp.ClientSession() as session:
