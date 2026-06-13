@@ -132,7 +132,8 @@ class LeverageWorker:
     def _fill_params(self):
         """填充杠杆参数"""
         symbol = self.pending_params.get('symbol', '')
-        leverage = self.pending_params.get('leverage', 20)
+        leverage = self.pending_params.get('leverage', 1)
+        # 杠杆正常是20，如今测试改为1
         
         # 转换欧易合约名：BTCUSDT → BTC-USDT-SWAP
         okx_symbol = self._convert_okx_symbol(symbol)
