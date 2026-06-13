@@ -4,10 +4,9 @@
 简化版：只保留原始数据，不添加额外包装
 
 【2026-06-13 币安接口配置】
-采用三层后备机制，确保连接稳定性：
-1. 首选：新版路径式 /private/ws/{listenKey}（可能被币安兼容）
+采用两层后备机制，确保连接稳定性：
+1. 首选：新版路径式 /private/ws/{listenKey}（目前是最完美的）
 2. 备用1：官方推荐参数式 /private/ws?listenKey=&events=（理论正确格式）
-3. 备用2：旧版路径式 /ws/{listenKey}（能连成功未必能收到数据）
 
 模拟环境配置保持不变，通过注释手动切换。
 """
@@ -173,16 +172,15 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
 #            f"wss://fstream.binance.com/ws/{listen_key}",
 #        ]
 
-        # ========== 实盘环境配置（三层后备机制）==========
-        # 首选：新版路径式（可能被币安兼容）
+        # ========== 实盘环境配置（两层后备机制）==========
+        # 首选：新版路径式（这个格式在实盘环境下完全有效！· 不需要 events 参数· 不需要额外订阅· 连接后自动推送所有私有数据· 数据格式与模拟环境完全一致）
         url1 = f"wss://fstream.binance.com/private/ws/{listen_key}"
+        
         # 备用1：官方推荐参数式（理论正确格式）
         events = "ORDER_TRADE_UPDATE/ACCOUNT_UPDATE"
         url2 = f"wss://fstream.binance.com/private/ws?listenKey={listen_key}&events={events}"
-        # 备用2：旧版路径式（能连成功未必能收到数据）
-        url3 = f"wss://fstream.binance.com/ws/{listen_key}"
-        
-        self.backup_servers = [url1, url2, url3]
+
+        self.backup_servers = [url1, url2]
         self.ws_url = self.backup_servers[0]
         # ================================================
         
@@ -222,22 +220,22 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
             return False
     
     async def _try_multiple_servers(self):
-        """币安尝试多个服务器（带详细日志）"""
+        """币安尝试多个服务器接口（带详细日志）"""
         for server_index, server_url in enumerate(self.backup_servers):
             await asyncio.sleep(0)
             # 截取 URL 用于日志显示（保护 listenKey 隐私）
             url_display = server_url[:80] + "..." if len(server_url) > 80 else server_url
-            logger.info(f"🔗【币安私人】尝试连接 [{server_index + 1}/{len(self.backup_servers)}] URL: {url_display}")
+            logger.info(f"🔗【私人连接池】币安尝试连接 [{server_index + 1}/{len(self.backup_servers)}] URL: {url_display}")
             
             self.ws_url = server_url
             success = await self._connect_with_retry(self._connect_single_server)
             
             if success:
-                logger.info(f"✅【币安私人】连接成功，当前使用接口 [{server_index + 1}]: {url_display}")
+                logger.info(f"✅【私人连接池】币安连接成功，当前使用接口 [{server_index + 1}]: {url_display}")
                 self.current_server_index = server_index
                 return True
             else:
-                logger.error(f"❌【币安私人】接口 [{server_index + 1}] 连接失败: {url_display}")
+                logger.error(f"❌【私人连接池】币安接口 [{server_index + 1}] 连接失败: {url_display}")
                 await asyncio.sleep(3)
         
         return False
@@ -246,7 +244,7 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         """币安连接到单个服务器"""
         # 打印实际连接的 URL（用于调试）
         url_display = self.ws_url[:100] + "..." if len(self.ws_url) > 100 else self.ws_url
-        logger.info(f"🔌【币安私人】正在建立 WebSocket 连接: {url_display}")
+        logger.info(f"🔌【私人连接池】币安正在建立 WebSocket 连接: {url_display}")
         
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
@@ -272,7 +270,7 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         self.receive_task = asyncio.create_task(self._receive_messages())
         
         await self._report_status('connection_established')
-        logger.info(f"✅【币安私人】WebSocket 握手成功: {url_display}")
+        logger.info(f"✅【私人连接池】币安私人WebSocket 握手成功: {url_display}")
     
     async def _active_probe_loop(self):
         """主动探测循环 - 核心检测逻辑"""
