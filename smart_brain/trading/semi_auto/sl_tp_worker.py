@@ -247,7 +247,15 @@ class SlTpWorker:
         return False
     
     async def _load_okx_tick_sz(self) -> bool:
-        """读取欧易价格精度 tickSz，重试1次"""
+        """
+        读取欧易价格精度 tickSz，重试1次
+        【修改】如果欧易不需要处理，直接返回成功
+        """
+        # 如果欧易不需要处理，直接跳过
+        if not self.okx_symbol:
+            logger.info("📭【半自动止损止盈工人】欧易无需处理，跳过精度读取")
+            return True
+        
         max_attempts = 2
         
         for attempt in range(max_attempts):
@@ -276,7 +284,15 @@ class SlTpWorker:
         return False
     
     async def _load_binance_tick_size(self) -> bool:
-        """读取币安价格精度 tickSize，重试1次"""
+        """
+        读取币安价格精度 tickSize，重试1次
+        【修改】如果币安不需要处理，直接返回成功
+        """
+        # 如果币安不需要处理，直接跳过
+        if not self.binance_symbol:
+            logger.info("📭【半自动止损止盈工人】币安无需处理，跳过精度读取")
+            return True
+        
         max_attempts = 2
         
         for attempt in range(max_attempts):
