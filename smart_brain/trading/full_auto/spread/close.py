@@ -494,12 +494,13 @@ class SpreadClose:
         
         # 仓位价值差 > 100
         value_diff = abs(okx_value - binance_value)
-        if value_diff > 100:
+        if value_diff > 2:
             if current_key == self.last_not_arbitrage_key:
                 return False
             self.last_not_arbitrage_key = current_key
             logger.warning(f"⚠️【价差清仓工人】仓位价值差 > 100: {value_diff:.2f}")
             return True
+        # 价差正常是100，如今测试改为2
         
         # 条件不满足，重置标识
         self.last_not_arbitrage_key = None

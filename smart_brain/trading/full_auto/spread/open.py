@@ -74,11 +74,14 @@ class SpreadOpenConfig:
     HEALTH_THRESHOLD = 1.5            # 成交-标记价差阈值（%）
     
     # 保证金
-    MARGIN_RATIO = 0.1                # 保证金比例（较小资产的 10%）
-    MIN_ASSET = 50                    # 最小资产要求（USDT）
+    MARGIN_RATIO = 0.05                # 保证金比例（较小资产的 10%）
+    # 比例正常是0.1，如今测试改为0.05
+    MIN_ASSET = 5                    # 最小资产要求（USDT）
+    # 最小资产要求正常是50，如今测试改为5
     
     # 杠杆
-    LEVERAGE = 20
+    LEVERAGE = 1
+    # 杠杆正常是20，如今测试改为1
 
 
 class SpreadOpen:
