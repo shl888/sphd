@@ -398,9 +398,9 @@ class SlTpWorker:
         按tick精度取整并格式化
         
         规则：
-        - tick = 0.1 → 保留1位小数，整数也写成 123.0
+        - tick = 0.1 → 保留1位小数
         - tick = 0.01 → 保留2位小数
-        - tick = 1 → 不保留小数
+        - tick = 1e-05 → 保留5位小数
         """
         if tick <= 0:
             return str(price)
@@ -408,12 +408,13 @@ class SlTpWorker:
         # 先按tick取整
         rounded = round(price / tick) * tick
         
-        # 计算需要保留的小数位数
+        # 【修复】正确计算小数位数，支持科学计数法
+        # 使用 format 而不是 str，避免科学计数法
         if tick >= 1:
             decimal_places = 0
         else:
-            # tick = 0.1 → 1位, tick = 0.01 → 2位
-            tick_str = str(tick)
+            # 将 tick 转为普通小数格式，去除末尾多余的零
+            tick_str = format(tick, 'f').rstrip('0').rstrip('.')
             if '.' in tick_str:
                 decimal_places = len(tick_str.split('.')[1])
             else:
