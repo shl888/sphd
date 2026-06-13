@@ -2,7 +2,16 @@
 私人WebSocket连接实现 - 双模式稳定版
 币安：主动探测模式 | 欧意：心跳+间隔模式
 简化版：只保留原始数据，不添加额外包装
+
+【2026-06-13 币安接口配置】
+采用三层后备机制，确保连接稳定性：
+1. 首选：新版路径式 /private/ws/{listenKey}（可能被币安兼容）
+2. 备用1：官方推荐参数式 /private/ws?listenKey=&events=（理论正确格式）
+3. 备用2：旧版路径式 /ws/{listenKey}（能连成功未必能收到数据）
+
+模拟环境配置保持不变，通过注释手动切换。
 """
+
 import asyncio
 import json
 import logging
@@ -67,7 +76,7 @@ class PrivateWebSocketConnection:
             # 取消所有任务
             tasks = [self.health_check_task, self.heartbeat_task, self.receive_task]
             for task in tasks:
-                await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 循环内让出CPU，避免任务取消过程阻塞
+                await asyncio.sleep(0)
                 if task:
                     task.cancel()
                     try:
@@ -106,7 +115,7 @@ class PrivateWebSocketConnection:
         """通用带重试的连接方法"""
         # 快速重试
         for attempt in range(max_quick_retries):
-            await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 循环开始让出CPU，避免重试循环阻塞
+            await asyncio.sleep(0)
             try:
                 logger.error(f"[私人连接池] {self.connection_id} 快速重试第{attempt + 1}次")
                 await connect_func()
@@ -120,7 +129,7 @@ class PrivateWebSocketConnection:
         
         # 慢速重试
         for attempt in range(max_slow_retries):
-            await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 循环开始让出CPU，避免重试循环阻塞
+            await asyncio.sleep(0)
             try:
                 logger.error(f"[私人连接池] {self.connection_id} 慢速重试第{attempt + 1}次")
                 await connect_func()
@@ -143,37 +152,44 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         self.listen_key = listen_key
         
         # 主动探测参数
-        self.probe_interval = 30  # 30秒探测一次（保守）
-        self.probe_timeout = 10   # 10秒等待响应
-        self.max_consecutive_failures = 3  # 连续3次失败断开
+        self.probe_interval = 30
+        self.probe_timeout = 10
+        self.max_consecutive_failures = 3
         
         # 探测状态
         self.probe_task = None
         self.probe_counter = 0
-        self.probe_ids: Set[int] = set()  # 已发送的探测ID
-        self.probe_response_received = True  # 初始为True
+        self.probe_ids: Set[int] = set()
+        self.probe_response_received = True
         self.consecutive_probe_failures = 0
         self.last_probe_sent = None
         self.waiting_for_probe = False
         
-        # 服务器配置
-        # 模拟环境（Testnet）手动切换
+        # ==========服务器接口配置==========
+        # 模拟环境配置（Testnet）手动切换
 #        self.ws_url = f"wss://fstream.binancefuture.com/ws/{listen_key}"
 #        self.backup_servers = [
 #            f"wss://fstream.binancefuture.com/ws/{listen_key}",
 #            f"wss://fstream.binance.com/ws/{listen_key}",
 #        ]
+
+        # ========== 实盘环境配置（三层后备机制）==========
+        # 首选：新版路径式（可能被币安兼容）
+        url1 = f"wss://fstream.binance.com/private/ws/{listen_key}"
+        # 备用1：官方推荐参数式（理论正确格式）
+        events = "ORDER_TRADE_UPDATE/ACCOUNT_UPDATE"
+        url2 = f"wss://fstream.binance.com/private/ws?listenKey={listen_key}&events={events}"
+        # 备用2：旧版路径式（能连成功未必能收到数据）
+        url3 = f"wss://fstream.binance.com/ws/{listen_key}"
         
-        # 实盘环境（Mainnet）- 当前使用
-        self.ws_url = f"wss://fstream.binance.com/private/ws/{listen_key}"
-        self.backup_servers = [
-            self.ws_url,
-            f"wss://fstream.binance.com/ws/{listen_key}",  # 旧版备用
-        ]
+        self.backup_servers = [url1, url2, url3]
+        self.ws_url = self.backup_servers[0]
+        # ================================================
         
         self.current_server_index = 0
         
         logger.info(f"[私人连接池] 币安私人 初始化完成（主动探测模式，间隔{self.probe_interval}秒）")
+        logger.info(f"[私人连接池] 币安私人 已配置 {len(self.backup_servers)} 个后备接口")
     
     async def connect(self):
         """建立连接并启动主动探测"""
@@ -206,25 +222,32 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
             return False
     
     async def _try_multiple_servers(self):
-        """币安尝试多个服务器"""
+        """币安尝试多个服务器（带详细日志）"""
         for server_index, server_url in enumerate(self.backup_servers):
-            await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 循环开始让出CPU，避免服务器切换循环阻塞
-            logger.info(f"[私人连接池] 币安私人 尝试服务器 {server_index + 1}/{len(self.backup_servers)}")
-            self.ws_url = server_url
+            await asyncio.sleep(0)
+            # 截取 URL 用于日志显示（保护 listenKey 隐私）
+            url_display = server_url[:80] + "..." if len(server_url) > 80 else server_url
+            logger.info(f"🔗【币安私人】尝试连接 [{server_index + 1}/{len(self.backup_servers)}] URL: {url_display}")
             
+            self.ws_url = server_url
             success = await self._connect_with_retry(self._connect_single_server)
             
             if success:
+                logger.info(f"✅【币安私人】连接成功，当前使用接口 [{server_index + 1}]: {url_display}")
                 self.current_server_index = server_index
                 return True
             else:
-                logger.warning(f"[私人连接池] 币安私人 服务器{server_index + 1}连接失败")
+                logger.error(f"❌【币安私人】接口 [{server_index + 1}] 连接失败: {url_display}")
                 await asyncio.sleep(3)
         
         return False
     
     async def _connect_single_server(self):
         """币安连接到单个服务器"""
+        # 打印实际连接的 URL（用于调试）
+        url_display = self.ws_url[:100] + "..." if len(self.ws_url) > 100 else self.ws_url
+        logger.info(f"🔌【币安私人】正在建立 WebSocket 连接: {url_display}")
+        
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
@@ -249,16 +272,15 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         self.receive_task = asyncio.create_task(self._receive_messages())
         
         await self._report_status('connection_established')
-        logger.info(f"[私人连接池] 币安私人 服务器连接成功")
+        logger.info(f"✅【币安私人】WebSocket 握手成功: {url_display}")
     
     async def _active_probe_loop(self):
         """主动探测循环 - 核心检测逻辑"""
         while self.connected:
-            await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 循环开始让出CPU，避免极端情况下循环饿死
+            await asyncio.sleep(0)
             try:
                 await asyncio.sleep(self.probe_interval)
                 
-                # 检查上次探测是否收到响应
                 if self.waiting_for_probe:
                     self.consecutive_probe_failures += 1
                     logger.warning(f"[私人连接池] 币安探测 探测#{self.probe_counter}未响应，连续失败: {self.consecutive_probe_failures}")
@@ -268,16 +290,13 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
                         self.connected = False
                         break
                 else:
-                    # 重置连续失败计数
                     if self.consecutive_probe_failures > 0:
                         logger.info(f"[私人连接池] 币安探测 探测恢复，重置失败计数")
                         self.consecutive_probe_failures = 0
                 
-                # 发送探测消息
                 self.probe_counter += 1
                 probe_id = 99900 + (self.probe_counter % 100)
                 
-                # 使用LIST_SUBSCRIPTIONS（币安必响应）
                 probe_msg = {
                     "method": "LIST_SUBSCRIPTIONS",
                     "id": probe_id
@@ -288,13 +307,11 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
                 self.waiting_for_probe = True
                 self.probe_ids.add(probe_id)
                 
-                # 发送失败 = 连接已死
                 await self.ws.send(json.dumps(probe_msg))
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                # 发送异常 = 连接已死
                 logger.error(f"[私人连接池] 币安探测 发送失败: {e}")
                 self.connected = False
                 break
@@ -303,7 +320,7 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
         """接收消息 - 处理探测响应"""
         try:
             async for message in self.ws:
-                await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 异步迭代循环内让出CPU，避免消息风暴时阻塞
+                await asyncio.sleep(0)
                 self.last_message_time = datetime.now()
                 self.message_counter += 1
                 
@@ -314,16 +331,13 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
                 try:
                     data = json.loads(message)
                     
-                    # 核心逻辑：只检查ID，不问内容
                     msg_id = data.get('id')
                     if msg_id and msg_id in self.probe_ids:
-                        # 有回音 = 连接活（不管内容是什么）
                         self.waiting_for_probe = False
                         self.probe_ids.discard(msg_id)
                         logger.debug(f"[私人连接池] 币安探测 收到响应 ID={msg_id}")
-                        continue  # 不转发探测响应
+                        continue
                     
-                    # 正常业务消息
                     event_type = data.get('e', 'unknown')
                     formatted_data = {
                         'exchange': 'binance',
@@ -332,7 +346,6 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
                         'data': data
                     }
                     
-                    # 异步转发，不等待
                     asyncio.create_task(self.data_callback(formatted_data))
                     
                 except json.JSONDecodeError:
@@ -351,7 +364,6 @@ class BinancePrivateConnection(PrivateWebSocketConnection):
             await self._report_status('error', {'error': str(e)})
         finally:
             self.connected = False
-            # 清理探测任务
             if self.probe_task:
                 self.probe_task.cancel()
     
@@ -439,30 +451,26 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
     
     async def _triple_connect_flow(self):
         """三重保障连接流程"""
-        # 1. 连接WebSocket
         connect_success = await self._connect_with_retry(self._connect_websocket)
         if not connect_success:
             return False
         
-        await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 步骤间主动让出，避免连续操作阻塞
+        await asyncio.sleep(0)
         
-        # 2. 认证
         auth_success = await self._authenticate_with_fallback()
         if not auth_success:
             await self.disconnect()
             return False
         
         self.authenticated = True
-        await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 步骤间主动让出
+        await asyncio.sleep(0)
         
-        # 3. 订阅
         subscribe_success = await self._smart_subscribe()
         if not subscribe_success:
             logger.warning("[私人连接池] 欧意私人 订阅部分失败，但连接已建立")
         
-        await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 步骤间主动让出
+        await asyncio.sleep(0)
         
-        # 4. 启动接收任务
         self.receive_task = asyncio.create_task(self._receive_messages())
         
         return True
@@ -603,8 +611,7 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
         """接收欧意私人消息 - 极简版：收到就推，不做任何处理"""
         try:
             async for message in self.ws:
-                await asyncio.sleep(0)  # ✅ [蚂蚁基因修复] 异步迭代循环内让出CPU，避免消息风暴时阻塞
-                # 只记录必要信息
+                await asyncio.sleep(0)
                 self.last_message_time = datetime.now()
                 self.message_counter += 1
                 
@@ -613,16 +620,13 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
                     logger.info(f"[私人连接池] 欧意私人 收到第一条消息")
                 
                 try:
-                    # 直接解析并推送，不做任何判断和处理
                     data = json.loads(message)
                     
-                    # ===== 过滤系统事件 =====
                     event = data.get('event', '')
                     if event in ['channel-conn-count', 'login', 'subscribe', 'error', 'unsubscribe']:
                         logger.debug(f"[私人连接池] 欧意私人 过滤系统事件: {event}")
-                        continue  # 跳过，不推送
+                        continue
                     
-                    # 提取 channel 并映射到标准类型
                     arg = data.get('arg', {})
                     channel = arg.get('channel', 'unknown')
                     
@@ -634,7 +638,6 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
                     }
                     data_type = channel_mapping.get(channel, 'unknown')
                     
-                    # 使用create_task异步推送，不等待
                     asyncio.create_task(self.data_callback({
                         'exchange': 'okx',
                         'data_type': data_type,
@@ -645,9 +648,8 @@ class OKXPrivateConnection(PrivateWebSocketConnection):
                 except json.JSONDecodeError:
                     logger.warning(f"[私人连接池] 欧意私人 无法解析JSON: {message[:100]}")
                 except Exception as e:
-                    # 任何错误只记录，继续收下一条
                     logger.error(f"[私人连接池] 欧意私人 处理消息错误: {e}")
-                    continue  # 继续收下一条，不断开
+                    continue
                     
         except websockets.ConnectionClosed as e:
             logger.warning(f"[私人连接池] 欧意私人 连接关闭: code={e.code}, reason={e.reason}")
