@@ -124,15 +124,17 @@ class FundingSlTp:
             
             self._init_cache()
             
+            # 【修改】支持单边持仓，不再强制要求双平台都有数据
             if not await self._load_private_data():
                 self._cleanup_work()
                 return
             
-            if not await self._load_okx_tick_sz():
+            # 【修改】只读取有缓存的交易所的精度数据
+            if self.okx_cache and not await self._load_okx_tick_sz():
                 self._cleanup_work()
                 return
             
-            if not await self._load_binance_tick_size():
+            if self.binance_cache and not await self._load_binance_tick_size():
                 self._cleanup_work()
                 return
             
@@ -163,7 +165,10 @@ class FundingSlTp:
     # ==================== 读取数据 ====================
     
     async def _load_private_data(self) -> bool:
-        """读取私人数据，失败重试1次"""
+        """
+        读取私人数据，重试1次
+        【修改】支持单边持仓：哪个交易所有数据就处理哪个，互不影响
+        """
         max_attempts = 2
         
         for attempt in range(max_attempts):
@@ -174,31 +179,48 @@ class FundingSlTp:
                 okx_data = user_data.get("okx", {})
                 binance_data = user_data.get("binance", {})
                 
-                self.okx_symbol = okx_data.get("开仓合约名", "")
-                self.okx_open_price = float(okx_data.get("开仓价", 0))
-                self.okx_position_side = okx_data.get("开仓方向", "").lower()
+                has_valid_data = False
                 
-                self.binance_symbol = binance_data.get("开仓合约名", "")
-                self.binance_open_price = float(binance_data.get("开仓价", 0))
-                self.binance_position_side = binance_data.get("开仓方向", "").upper()
+                # ========== 处理欧易数据 ==========
+                # 检查欧易开仓成功标签，如果有标签就说明有持仓
+                if self.okx_open_ok:
+                    self.okx_symbol = okx_data.get("开仓合约名", "")
+                    self.okx_open_price = float(okx_data.get("开仓价", 0))
+                    self.okx_position_side = okx_data.get("开仓方向", "").lower()
+                    
+                    if self.okx_symbol and self.okx_open_price > 0 and self.okx_position_side:
+                        has_valid_data = True
+                        logger.info(f"✅【资金费止损止盈工人】欧易数据有效: 合约={self.okx_symbol}, 价格={self.okx_open_price}, 方向={self.okx_position_side}")
+                    else:
+                        # 欧易无有效持仓数据，清空欧易缓存
+                        self.okx_cache = None
+                        self.okx_open_ok = False  # 重置标签，避免重复读取
+                        logger.warning("⚠️【资金费止损止盈工人】欧易数据无效，跳过")
                 
-                if not self.okx_symbol or self.okx_open_price <= 0 or not self.okx_position_side:
-                    logger.warning(f"⚠️【资金费止损止盈工人】欧易私人数据不完整")
+                # ========== 处理币安数据 ==========
+                # 检查币安开仓成功标签，如果有标签就说明有持仓
+                if self.binance_open_ok:
+                    self.binance_symbol = binance_data.get("开仓合约名", "")
+                    self.binance_open_price = float(binance_data.get("开仓价", 0))
+                    self.binance_position_side = binance_data.get("开仓方向", "").upper()
+                    
+                    if self.binance_symbol and self.binance_open_price > 0 and self.binance_position_side:
+                        has_valid_data = True
+                        logger.info(f"✅【资金费止损止盈工人】币安数据有效: 合约={self.binance_symbol}, 价格={self.binance_open_price}, 方向={self.binance_position_side}")
+                    else:
+                        # 币安无有效持仓数据，清空币安缓存
+                        self.binance_cache = None
+                        self.binance_open_ok = False  # 重置标签，避免重复读取
+                        logger.warning("⚠️【资金费止损止盈工人】币安数据无效，跳过")
+                
+                # 【修改】只要有一个交易所有效就继续，不再强制要求两个都有
+                if has_valid_data:
+                    return True
+                else:
+                    logger.warning(f"⚠️【资金费止损止盈工人】没有找到任何有效持仓数据 (尝试 {attempt+1}/{max_attempts})")
                     if attempt < max_attempts - 1:
                         await asyncio.sleep(1)
-                        continue
-                    return False
-                
-                if not self.binance_symbol or self.binance_open_price <= 0 or not self.binance_position_side:
-                    logger.warning(f"⚠️【资金费止损止盈工人】币安私人数据不完整")
-                    if attempt < max_attempts - 1:
-                        await asyncio.sleep(1)
-                        continue
-                    return False
-                
-                logger.info(f"✅【资金费止损止盈工人】私人数据: 欧易={self.okx_symbol} 价格={self.okx_open_price} 方向={self.okx_position_side}")
-                logger.info(f"✅【资金费止损止盈工人】私人数据: 币安={self.binance_symbol} 价格={self.binance_open_price} 方向={self.binance_position_side}")
-                return True
+                    continue
                 
             except asyncio.CancelledError:
                 raise
@@ -207,10 +229,19 @@ class FundingSlTp:
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
+        logger.error("❌【资金费止损止盈工人】所有交易所均无有效持仓数据")
         return False
     
     async def _load_okx_tick_sz(self) -> bool:
-        """读取欧易价格精度 tickSz，失败重试1次"""
+        """
+        读取欧易价格精度 tickSz，重试1次
+        【修改】如果欧易不需要处理，直接返回成功
+        """
+        # 如果欧易不需要处理，直接跳过
+        if not self.okx_cache:
+            logger.info("📭【资金费止损止盈工人】欧易无需处理，跳过精度读取")
+            return True
+        
         max_attempts = 2
         okx_inst_id = self._convert_okx_symbol(self.okx_symbol)
         
@@ -247,7 +278,15 @@ class FundingSlTp:
         return False
     
     async def _load_binance_tick_size(self) -> bool:
-        """读取币安价格精度 tickSize，失败重试1次"""
+        """
+        读取币安价格精度 tickSize，重试1次
+        【修改】如果币安不需要处理，直接返回成功
+        """
+        # 如果币安不需要处理，直接跳过
+        if not self.binance_cache:
+            logger.info("📭【资金费止损止盈工人】币安无需处理，跳过精度读取")
+            return True
+        
         max_attempts = 2
         
         for attempt in range(max_attempts):
@@ -296,91 +335,124 @@ class FundingSlTp:
     # ==================== 计算价格 ====================
     
     def _calculate_prices(self):
-        """计算止损价和止盈价（固定 |35%|）"""
+        """
+        计算止损价和止盈价（固定 |35%|）
+        【修改】只计算有缓存的交易所
+        """
         sl_abs = 0.35
         tp = 0.35
         
-        if self.okx_position_side == "long":
-            self.okx_stop_price = self.okx_open_price * (1 - sl_abs)
-            self.okx_take_price = self.okx_open_price * (1 + tp)
-            logger.info(f"📊【资金费止损止盈工人】欧易做多: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
-        elif self.okx_position_side == "short":
-            self.okx_stop_price = self.okx_open_price * (1 + sl_abs)
-            self.okx_take_price = self.okx_open_price * (1 - tp)
-            logger.info(f"📊【资金费止损止盈工人】欧易做空: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
+        # 计算欧易价格
+        if self.okx_cache:
+            if self.okx_position_side == "long":
+                self.okx_stop_price = self.okx_open_price * (1 - sl_abs)
+                self.okx_take_price = self.okx_open_price * (1 + tp)
+                logger.info(f"📊【资金费止损止盈工人】欧易做多: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
+            elif self.okx_position_side == "short":
+                self.okx_stop_price = self.okx_open_price * (1 + sl_abs)
+                self.okx_take_price = self.okx_open_price * (1 - tp)
+                logger.info(f"📊【资金费止损止盈工人】欧易做空: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
         
-        if self.binance_position_side == "LONG":
-            self.binance_stop_price = self.binance_open_price * (1 - sl_abs)
-            self.binance_take_price = self.binance_open_price * (1 + tp)
-            logger.info(f"📊【资金费止损止盈工人】币安做多: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
-        elif self.binance_position_side == "SHORT":
-            self.binance_stop_price = self.binance_open_price * (1 + sl_abs)
-            self.binance_take_price = self.binance_open_price * (1 - tp)
-            logger.info(f"📊【资金费止损止盈工人】币安做空: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
+        # 计算币安价格
+        if self.binance_cache:
+            if self.binance_position_side == "LONG":
+                self.binance_stop_price = self.binance_open_price * (1 - sl_abs)
+                self.binance_take_price = self.binance_open_price * (1 + tp)
+                logger.info(f"📊【资金费止损止盈工人】币安做多: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
+            elif self.binance_position_side == "SHORT":
+                self.binance_stop_price = self.binance_open_price * (1 + sl_abs)
+                self.binance_take_price = self.binance_open_price * (1 - tp)
+                logger.info(f"📊【资金费止损止盈工人】币安做空: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
     
     def _format_prices(self):
-        """按精度取整并格式化"""
-        self.okx_stop_price = self._round_and_format(self.okx_stop_price, self.okx_tick_sz)
-        self.okx_take_price = self._round_and_format(self.okx_take_price, self.okx_tick_sz)
-        logger.info(f"🎯【资金费止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
+        """
+        按精度取整并格式化
+        【修改】只格式化有缓存的交易所
+        """
+        # 欧易格式化
+        if self.okx_cache:
+            self.okx_stop_price = self._round_and_format(self.okx_stop_price, self.okx_tick_sz)
+            self.okx_take_price = self._round_and_format(self.okx_take_price, self.okx_tick_sz)
+            logger.info(f"🎯【资金费止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
         
-        self.binance_stop_price = self._round_and_format(self.binance_stop_price, self.binance_tick_size)
-        self.binance_take_price = self._round_and_format(self.binance_take_price, self.binance_tick_size)
-        logger.info(f"🎯【资金费止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
+        # 币安格式化
+        if self.binance_cache:
+            self.binance_stop_price = self._round_and_format(self.binance_stop_price, self.binance_tick_size)
+            self.binance_take_price = self._round_and_format(self.binance_take_price, self.binance_tick_size)
+            logger.info(f"🎯【资金费止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
     
     def _round_and_format(self, price: float, tick: float) -> str:
-        """按tick精度取整并格式化"""
+        """
+        按tick精度取整并格式化
+        
+        规则：
+        - tick = 0.1 → 保留1位小数
+        - tick = 0.01 → 保留2位小数
+        - tick = 1e-05 → 保留5位小数
+        """
         if tick <= 0:
             return str(price)
         
+        # 先按tick取整
         rounded = round(price / tick) * tick
         
+        # 【修复】正确计算小数位数，支持科学计数法
+        # 使用 format 而不是 str，避免科学计数法
         if tick >= 1:
             decimal_places = 0
         else:
-            tick_str = str(tick)
+            # 将 tick 转为普通小数格式，去除末尾多余的零
+            tick_str = format(tick, 'f').rstrip('0').rstrip('.')
             if '.' in tick_str:
                 decimal_places = len(tick_str.split('.')[1])
             else:
                 decimal_places = 0
         
+        # 格式化
         return f"{rounded:.{decimal_places}f}"
     
     # ==================== 填充参数 ====================
     
     def _fill_params(self):
-        """填充止损止盈参数"""
-        okx_inst_id = self._convert_okx_symbol(self.okx_symbol)
+        """
+        填充止损止盈参数
+        【修改】只填充有缓存的交易所
+        """
+        # 填充欧易参数
+        if self.okx_cache:
+            okx_inst_id = self._convert_okx_symbol(self.okx_symbol)
+            
+            self.okx_cache["params"]["instId"] = okx_inst_id
+            self.okx_cache["params"]["posSide"] = self.okx_position_side
+            
+            if self.okx_position_side == "long":
+                self.okx_cache["params"]["side"] = "sell"
+            else:
+                self.okx_cache["params"]["side"] = "buy"
+            
+            self.okx_cache["params"]["slTriggerPx"] = self.okx_stop_price
+            self.okx_cache["params"]["tpTriggerPx"] = self.okx_take_price
+            
+            logger.info(f"📝【资金费止损止盈工人】欧易参数已填充: side={self.okx_cache['params']['side']}, posSide={self.okx_cache['params']['posSide']}")
         
-        self.okx_cache["params"]["instId"] = okx_inst_id
-        self.okx_cache["params"]["posSide"] = self.okx_position_side
-        
-        if self.okx_position_side == "long":
-            self.okx_cache["params"]["side"] = "sell"
-        else:
-            self.okx_cache["params"]["side"] = "buy"
-        
-        self.okx_cache["params"]["slTriggerPx"] = self.okx_stop_price
-        self.okx_cache["params"]["tpTriggerPx"] = self.okx_take_price
-        
-        logger.info(f"📝【资金费止损止盈工人】欧易参数已填充")
-        
-        self.binance_cache["orders"][0]["symbol"] = self.binance_symbol
-        self.binance_cache["orders"][0]["positionSide"] = self.binance_position_side
-        self.binance_cache["orders"][0]["triggerPrice"] = self.binance_stop_price
-        
-        self.binance_cache["orders"][1]["symbol"] = self.binance_symbol
-        self.binance_cache["orders"][1]["positionSide"] = self.binance_position_side
-        self.binance_cache["orders"][1]["triggerPrice"] = self.binance_take_price
-        
-        if self.binance_position_side == "LONG":
-            self.binance_cache["orders"][0]["side"] = "SELL"
-            self.binance_cache["orders"][1]["side"] = "SELL"
-        else:
-            self.binance_cache["orders"][0]["side"] = "BUY"
-            self.binance_cache["orders"][1]["side"] = "BUY"
-        
-        logger.info(f"📝【资金费止损止盈工人】币安参数已填充")
+        # 填充币安参数
+        if self.binance_cache:
+            self.binance_cache["orders"][0]["symbol"] = self.binance_symbol
+            self.binance_cache["orders"][0]["positionSide"] = self.binance_position_side
+            self.binance_cache["orders"][0]["triggerPrice"] = self.binance_stop_price
+            
+            self.binance_cache["orders"][1]["symbol"] = self.binance_symbol
+            self.binance_cache["orders"][1]["positionSide"] = self.binance_position_side
+            self.binance_cache["orders"][1]["triggerPrice"] = self.binance_take_price
+            
+            if self.binance_position_side == "LONG":
+                self.binance_cache["orders"][0]["side"] = "SELL"
+                self.binance_cache["orders"][1]["side"] = "SELL"
+            else:
+                self.binance_cache["orders"][0]["side"] = "BUY"
+                self.binance_cache["orders"][1]["side"] = "BUY"
+            
+            logger.info(f"📝【资金费止损止盈工人】币安参数已填充")
     
     # ==================== 推送 ====================
     
@@ -395,6 +467,8 @@ class FundingSlTp:
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
             logger.info(f"📤【资金费止损止盈工人】已推送 {len(orders)} 个订单给下单工人")
+        elif not orders:
+            logger.warning("⚠️【资金费止损止盈工人】没有需要推送的订单")
     
     # ==================== 清理 ====================
     
