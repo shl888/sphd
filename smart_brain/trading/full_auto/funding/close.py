@@ -693,10 +693,12 @@ class FundingClose:
         rate_diff = symbol_data.get('rate_diff')
         if rate_diff is None:
             return False
+            
+        # 费率差正常是0.3，如今测试改为0.1
         
         try:
             rate_diff = float(rate_diff)
-            if rate_diff <= 0.3:
+            if rate_diff <= 0.1:
                 if self.last_rate_diff_triggered:
                     return False
                 self.last_rate_diff_triggered = True

@@ -55,10 +55,11 @@ class FundingOpen:
                 "order_type": "market",
                 "symbol": None,
                 "margin": None,
-                "leverage": 20,
+                "leverage": 1,
                 "direction": None
             }
         }
+        # 杠杆正常是20，如今测试改为1
         
         # 缓存
         self.cached_template = None
@@ -331,12 +332,13 @@ class FundingOpen:
             okx_asset = float(okx_data.get('账户资产额', 0))
             binance_asset = float(binance_data.get('账户资产额', 0))
             
-            if okx_asset < 50:
-                logger.warning(f"⚠️【资金费开仓工人】欧易资产不足50: {okx_asset:.2f}")
+            if okx_asset < 5:
+                logger.warning(f"⚠️【资金费开仓工人】欧易资产不足5: {okx_asset:.2f}")
                 return False
-            if binance_asset < 50:
-                logger.warning(f"⚠️【资金费开仓工人】币安资产不足50: {binance_asset:.2f}")
+            if binance_asset < 5:
+                logger.warning(f"⚠️【资金费开仓工人】币安资产不足5: {binance_asset:.2f}")
                 return False
+            # 资产正常是50，如今测试改为5
             
             logger.info(f"✅【资金费开仓工人】资产检查通过: 欧易={okx_asset:.2f}, 币安={binance_asset:.2f}")
             return True
@@ -512,7 +514,8 @@ class FundingOpen:
             binance_asset = float(binance_data.get('账户资产额', 0))
             
             smaller = min(okx_asset, binance_asset)
-            margin = smaller * 0.1
+            margin = smaller * 0.05
+            # 系数正常是0.1，如今测试改为0.05
             
             logger.info(f"💰【资金费开仓工人】保证金计算: 较小资产={smaller:.2f}, margin={margin:.2f}")
             return margin
