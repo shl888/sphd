@@ -1,4 +1,3 @@
-# trading/semi_auto/sl_tp_worker.py
 """
 半自动止损止盈工人 - 独立负责设置止损止盈
 
@@ -102,29 +101,30 @@ class SlTpWorker:
             self._fill_symbols()
             
             # 4. 读取私人数据（开仓价、开仓方向）
+            # 【修改】支持单边持仓，不再强制要求双平台都有数据
             if not await self._load_private_data():
                 self._cleanup()
                 return
             
-            # 5. 读取欧易面值数据（tickSz）
-            if not await self._load_okx_tick_sz():
+            # 5. 读取欧易面值数据（tickSz）- 仅当欧易需要处理时
+            if self.okx_cache and not await self._load_okx_tick_sz():
                 self._cleanup()
                 return
             
-            # 6. 读取币安精度数据（tickSize）
-            if not await self._load_binance_tick_size():
+            # 6. 读取币安精度数据（tickSize）- 仅当币安需要处理时
+            if self.binance_cache and not await self._load_binance_tick_size():
                 self._cleanup()
                 return
             
-            # 7. 计算止损止盈价
+            # 7. 计算止损止盈价 - 仅计算有缓存的交易所
             if not self._calculate_prices():
                 self._cleanup()
                 return
             
-            # 8. 按精度取整并格式化
+            # 8. 按精度取整并格式化 - 仅格式化有缓存的交易所
             self._format_prices()
             
-            # 9. 填充参数
+            # 9. 填充参数 - 仅填充有缓存的交易所
             self._fill_params()
             
             # 10. 推送给下单工人
@@ -153,8 +153,9 @@ class SlTpWorker:
             self.okx_symbol = okx_data.get("symbol")
             self.binance_symbol = binance_data.get("symbol")
             
-            if not self.okx_symbol or not self.binance_symbol:
-                logger.error("❌【半自动止损止盈工人】合约名缺失")
+            # 【修改】至少需要一个合约名，不再强制要求两个都有
+            if not self.okx_symbol and not self.binance_symbol:
+                logger.error("❌【半自动止损止盈工人】至少需要一个合约名")
                 return False
             
             # 提取幅度
@@ -177,16 +178,21 @@ class SlTpWorker:
     def _fill_symbols(self):
         """填充合约名"""
         # 欧易
-        self.okx_cache["params"]["instId"] = self.okx_symbol
+        if self.okx_symbol:
+            self.okx_cache["params"]["instId"] = self.okx_symbol
         
         # 币安（索引0和索引1的symbol相同）
-        self.binance_cache["orders"][0]["symbol"] = self.binance_symbol
-        self.binance_cache["orders"][1]["symbol"] = self.binance_symbol
+        if self.binance_symbol:
+            self.binance_cache["orders"][0]["symbol"] = self.binance_symbol
+            self.binance_cache["orders"][1]["symbol"] = self.binance_symbol
         
         logger.info(f"📝【半自动止损止盈工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
     
     async def _load_private_data(self) -> bool:
-        """读取私人数据，重试1次"""
+        """
+        读取私人数据，重试1次
+        【修改】支持单边持仓：哪个交易所有数据就处理哪个，互不影响
+        """
         max_attempts = 2
         
         for attempt in range(max_attempts):
@@ -197,40 +203,47 @@ class SlTpWorker:
                 okx_data = user_data.get("okx", {})
                 binance_data = user_data.get("binance", {})
                 
-                # 提取欧易数据
-                self.okx_open_price = float(okx_data.get("开仓价", 0))
-                self.okx_position_side = okx_data.get("开仓方向", "").lower()
+                has_valid_data = False  # 标记是否至少有一个有效持仓
                 
-                # 提取币安数据
-                self.binance_open_price = float(binance_data.get("开仓价", 0))
-                self.binance_position_side = binance_data.get("开仓方向", "").upper()
+                # ========== 处理欧易数据 ==========
+                if self.okx_symbol:
+                    self.okx_open_price = float(okx_data.get("开仓价", 0))
+                    self.okx_position_side = okx_data.get("开仓方向", "").lower()
+                    
+                    if self.okx_open_price > 0 and self.okx_position_side:
+                        has_valid_data = True
+                        logger.info(f"✅【半自动止损止盈工人】欧易数据有效: 开仓价={self.okx_open_price}, 方向={self.okx_position_side}")
+                    else:
+                        # 欧易无有效持仓数据，清空欧易缓存，跳过后续处理
+                        self.okx_cache = None
+                        logger.warning("⚠️【半自动止损止盈工人】欧易无有效持仓数据，跳过")
                 
-                # 校验
-                if self.okx_open_price <= 0:
-                    logger.warning(f"⚠️【半自动止损止盈工人】欧易开仓价无效: {self.okx_open_price}")
+                # ========== 处理币安数据 ==========
+                if self.binance_symbol:
+                    self.binance_open_price = float(binance_data.get("开仓价", 0))
+                    self.binance_position_side = binance_data.get("开仓方向", "").upper()
+                    
+                    if self.binance_open_price > 0 and self.binance_position_side:
+                        has_valid_data = True
+                        logger.info(f"✅【半自动止损止盈工人】币安数据有效: 开仓价={self.binance_open_price}, 方向={self.binance_position_side}")
+                    else:
+                        # 币安无有效持仓数据，清空币安缓存，跳过后续处理
+                        self.binance_cache = None
+                        logger.warning("⚠️【半自动止损止盈工人】币安无有效持仓数据，跳过")
+                
+                # 【修改】只要有一个交易所有效就继续，不再强制要求两个都有
+                if has_valid_data:
+                    return True
+                else:
+                    logger.warning(f"⚠️【半自动止损止盈工人】没有找到任何有效持仓数据 (尝试 {attempt+1}/{max_attempts})")
                     continue
-                
-                if not self.okx_position_side:
-                    logger.warning("⚠️【半自动止损止盈工人】欧易开仓方向为空")
-                    continue
-                
-                if self.binance_open_price <= 0:
-                    logger.warning(f"⚠️【半自动止损止盈工人】币安开仓价无效: {self.binance_open_price}")
-                    continue
-                
-                if not self.binance_position_side:
-                    logger.warning("⚠️【半自动止损止盈工人】币安开仓方向为空")
-                    continue
-                
-                logger.info(f"✅【半自动止损止盈工人】私人数据: 欧易开仓价={self.okx_open_price}, 方向={self.okx_position_side}")
-                logger.info(f"✅【半自动止损止盈工人】私人数据: 币安开仓价={self.binance_open_price}, 方向={self.binance_position_side}")
-                return True
                 
             except Exception as e:
                 logger.error(f"❌【半自动止损止盈工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
+        logger.error("❌【半自动止损止盈工人】所有交易所均无有效持仓数据")
         return False
     
     async def _load_okx_tick_sz(self) -> bool:
@@ -292,38 +305,53 @@ class SlTpWorker:
         return False
     
     def _calculate_prices(self) -> bool:
-        """计算止损价和止盈价"""
+        """
+        计算止损价和止盈价
+        【修改】只计算有缓存的交易所（即有持仓的那个）
+        """
         try:
             # 止损幅度取绝对值
             sl_abs = abs(self.stop_loss_percent) / 100
             tp = self.take_profit_percent / 100
             
-            # 欧易计算
-            if self.okx_position_side == "long":
-                # 做多：止损=开仓价×(1-止损%)，止盈=开仓价×(1+止盈%)
-                self.okx_stop_price = self.okx_open_price * (1 - sl_abs)
-                self.okx_take_price = self.okx_open_price * (1 + tp)
-                logger.info(f"📊【半自动止损止盈工人】欧易做多: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
-            elif self.okx_position_side == "short":
-                # 做空：止损=开仓价×(1+止损%)，止盈=开仓价×(1-止盈%)
-                self.okx_stop_price = self.okx_open_price * (1 + sl_abs)
-                self.okx_take_price = self.okx_open_price * (1 - tp)
-                logger.info(f"📊【半自动止损止盈工人】欧易做空: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
-            else:
-                logger.error(f"❌【半自动止损止盈工人】未知的欧易开仓方向: {self.okx_position_side}")
-                return False
+            has_valid = False
             
-            # 币安计算
-            if self.binance_position_side == "LONG":
-                self.binance_stop_price = self.binance_open_price * (1 - sl_abs)
-                self.binance_take_price = self.binance_open_price * (1 + tp)
-                logger.info(f"📊【半自动止损止盈工人】币安做多: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
-            elif self.binance_position_side == "SHORT":
-                self.binance_stop_price = self.binance_open_price * (1 + sl_abs)
-                self.binance_take_price = self.binance_open_price * (1 - tp)
-                logger.info(f"📊【半自动止损止盈工人】币安做空: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
-            else:
-                logger.error(f"❌【半自动止损止盈工人】未知的币安开仓方向: {self.binance_position_side}")
+            # ========== 计算欧易价格（如果欧易有缓存） ==========
+            if self.okx_cache:
+                if self.okx_position_side == "long":
+                    # 做多：止损=开仓价×(1-止损%)，止盈=开仓价×(1+止盈%)
+                    self.okx_stop_price = self.okx_open_price * (1 - sl_abs)
+                    self.okx_take_price = self.okx_open_price * (1 + tp)
+                    logger.info(f"📊【半自动止损止盈工人】欧易做多: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
+                    has_valid = True
+                elif self.okx_position_side == "short":
+                    # 做空：止损=开仓价×(1+止损%)，止盈=开仓价×(1-止盈%)
+                    self.okx_stop_price = self.okx_open_price * (1 + sl_abs)
+                    self.okx_take_price = self.okx_open_price * (1 - tp)
+                    logger.info(f"📊【半自动止损止盈工人】欧易做空: 止损价={self.okx_stop_price}, 止盈价={self.okx_take_price}")
+                    has_valid = True
+                else:
+                    logger.error(f"❌【半自动止损止盈工人】未知的欧易开仓方向: {self.okx_position_side}")
+                    self.okx_cache = None  # 清空无效的欧易缓存
+            
+            # ========== 计算币安价格（如果币安有缓存） ==========
+            if self.binance_cache:
+                if self.binance_position_side == "LONG":
+                    self.binance_stop_price = self.binance_open_price * (1 - sl_abs)
+                    self.binance_take_price = self.binance_open_price * (1 + tp)
+                    logger.info(f"📊【半自动止损止盈工人】币安做多: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+                    has_valid = True
+                elif self.binance_position_side == "SHORT":
+                    self.binance_stop_price = self.binance_open_price * (1 + sl_abs)
+                    self.binance_take_price = self.binance_open_price * (1 - tp)
+                    logger.info(f"📊【半自动止损止盈工人】币安做空: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+                    has_valid = True
+                else:
+                    logger.error(f"❌【半自动止损止盈工人】未知的币安开仓方向: {self.binance_position_side}")
+                    self.binance_cache = None  # 清空无效的币安缓存
+            
+            if not has_valid:
+                logger.error("❌【半自动止损止盈工人】没有任何有效价格可计算")
                 return False
             
             return True
@@ -333,16 +361,21 @@ class SlTpWorker:
             return False
     
     def _format_prices(self):
-        """按精度取整并格式化（严格对齐tick精度位数）"""
+        """
+        按精度取整并格式化（严格对齐tick精度位数）
+        【修改】只格式化有缓存的交易所
+        """
         # 欧易格式化
-        self.okx_stop_price = self._round_and_format(self.okx_stop_price, self.okx_tick_sz)
-        self.okx_take_price = self._round_and_format(self.okx_take_price, self.okx_tick_sz)
-        logger.info(f"🎯【半自动止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
+        if self.okx_cache:
+            self.okx_stop_price = self._round_and_format(self.okx_stop_price, self.okx_tick_sz)
+            self.okx_take_price = self._round_and_format(self.okx_take_price, self.okx_tick_sz)
+            logger.info(f"🎯【半自动止损止盈工人】欧易精度化后: 止损={self.okx_stop_price}, 止盈={self.okx_take_price}")
         
         # 币安格式化
-        self.binance_stop_price = self._round_and_format(self.binance_stop_price, self.binance_tick_size)
-        self.binance_take_price = self._round_and_format(self.binance_take_price, self.binance_tick_size)
-        logger.info(f"🎯【半自动止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
+        if self.binance_cache:
+            self.binance_stop_price = self._round_and_format(self.binance_stop_price, self.binance_tick_size)
+            self.binance_take_price = self._round_and_format(self.binance_take_price, self.binance_tick_size)
+            logger.info(f"🎯【半自动止损止盈工人】币安精度化后: 止损={self.binance_stop_price}, 止盈={self.binance_take_price}")
     
     def _round_and_format(self, price: float, tick: float) -> str:
         """
@@ -374,41 +407,46 @@ class SlTpWorker:
         return f"{rounded:.{decimal_places}f}"
     
     def _fill_params(self):
-        """填充参数"""
-        # ========== 欧易参数 ==========
-        # posSide：开仓方向小写
-        self.okx_cache["params"]["posSide"] = self.okx_position_side
+        """
+        填充参数
+        【修改】只填充有缓存的交易所
+        """
+        # ========== 填充欧易参数 ==========
+        if self.okx_cache:
+            # posSide：开仓方向小写
+            self.okx_cache["params"]["posSide"] = self.okx_position_side
+            
+            # side：平仓方向（与开仓方向相反）
+            if self.okx_position_side == "long":
+                self.okx_cache["params"]["side"] = "sell"
+            else:
+                self.okx_cache["params"]["side"] = "buy"
+            
+            # 止损止盈价（已经是格式化后的字符串）
+            self.okx_cache["params"]["slTriggerPx"] = self.okx_stop_price
+            self.okx_cache["params"]["tpTriggerPx"] = self.okx_take_price
+            
+            logger.info(f"📝【半自动止损止盈工人】欧易参数已填充: side={self.okx_cache['params']['side']}, posSide={self.okx_cache['params']['posSide']}")
         
-        # side：平仓方向（与开仓方向相反）
-        if self.okx_position_side == "long":
-            self.okx_cache["params"]["side"] = "sell"
-        else:
-            self.okx_cache["params"]["side"] = "buy"
-        
-        # 止损止盈价（已经是格式化后的字符串）
-        self.okx_cache["params"]["slTriggerPx"] = self.okx_stop_price
-        self.okx_cache["params"]["tpTriggerPx"] = self.okx_take_price
-        
-        logger.info(f"📝【半自动止损止盈工人】欧易参数已填充: side={self.okx_cache['params']['side']}, posSide={self.okx_cache['params']['posSide']}")
-        
-        # ========== 币安参数 ==========
-        # 止损单（索引0）
-        self.binance_cache["orders"][0]["positionSide"] = self.binance_position_side
-        self.binance_cache["orders"][0]["triggerPrice"] = self.binance_stop_price
-        
-        # 止盈单（索引1）
-        self.binance_cache["orders"][1]["positionSide"] = self.binance_position_side
-        self.binance_cache["orders"][1]["triggerPrice"] = self.binance_take_price
-        
-        # side：平仓方向（与开仓方向相反）
-        if self.binance_position_side == "LONG":
-            self.binance_cache["orders"][0]["side"] = "SELL"
-            self.binance_cache["orders"][1]["side"] = "SELL"
-        else:
-            self.binance_cache["orders"][0]["side"] = "BUY"
-            self.binance_cache["orders"][1]["side"] = "BUY"
-        
-        logger.info(f"📝【半自动止损止盈工人】币安参数已填充: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
+        # ========== 填充币安参数 ==========
+        if self.binance_cache:
+            # 止损单（索引0）
+            self.binance_cache["orders"][0]["positionSide"] = self.binance_position_side
+            self.binance_cache["orders"][0]["triggerPrice"] = self.binance_stop_price
+            
+            # 止盈单（索引1）
+            self.binance_cache["orders"][1]["positionSide"] = self.binance_position_side
+            self.binance_cache["orders"][1]["triggerPrice"] = self.binance_take_price
+            
+            # side：平仓方向（与开仓方向相反）
+            if self.binance_position_side == "LONG":
+                self.binance_cache["orders"][0]["side"] = "SELL"
+                self.binance_cache["orders"][1]["side"] = "SELL"
+            else:
+                self.binance_cache["orders"][0]["side"] = "BUY"
+                self.binance_cache["orders"][1]["side"] = "BUY"
+            
+            logger.info(f"📝【半自动止损止盈工人】币安参数已填充: 止损价={self.binance_stop_price}, 止盈价={self.binance_take_price}")
     
     def _send_to_trader(self):
         """推送给下单工人"""
@@ -421,6 +459,8 @@ class SlTpWorker:
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
             logger.info(f"📤【半自动止损止盈工人】已推送 {len(orders)} 个订单给下单工人")
+        elif not orders:
+            logger.warning("⚠️【半自动止损止盈工人】没有需要推送的订单")
     
     def _cleanup(self):
         """清空所有缓存"""

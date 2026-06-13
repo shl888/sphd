@@ -1,4 +1,3 @@
-# trading/semi_auto/close_position_worker.py
 """
 半自动清仓工人 - 独立负责平仓
 
@@ -84,11 +83,12 @@ class ClosePositionWorker:
             self._fill_symbols()
             
             # 4. 读取私人数据（开仓方向、币安持仓币数）
+            # 【修改】支持单边持仓，不再强制要求双平台都有数据
             if not await self._load_private_data():
                 self._cleanup()
                 return
             
-            # 5. 填充方向
+            # 5. 填充方向 - 仅填充有缓存的交易所
             self._fill_direction()
             
             # 6. 推送给下单工人
@@ -117,8 +117,9 @@ class ClosePositionWorker:
             self.okx_symbol = okx_data.get("symbol")
             self.binance_symbol = binance_data.get("symbol")
             
-            if not self.okx_symbol or not self.binance_symbol:
-                logger.error("❌【半自动清仓工人】合约名缺失")
+            # 【修改】至少需要一个合约名，不再强制要求两个都有
+            if not self.okx_symbol and not self.binance_symbol:
+                logger.error("❌【半自动清仓工人】至少需要一个合约名")
                 return False
             
             logger.info(f"📋【半自动清仓工人】指令参数: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
@@ -137,15 +138,20 @@ class ClosePositionWorker:
     def _fill_symbols(self):
         """填充合约名"""
         # 欧易
-        self.okx_cache["params"]["instId"] = self.okx_symbol
+        if self.okx_symbol:
+            self.okx_cache["params"]["instId"] = self.okx_symbol
         
         # 币安
-        self.binance_cache["params"]["symbol"] = self.binance_symbol
+        if self.binance_symbol:
+            self.binance_cache["params"]["symbol"] = self.binance_symbol
         
         logger.info(f"📝【半自动清仓工人】合约名已填充: 欧易={self.okx_symbol}, 币安={self.binance_symbol}")
     
     async def _load_private_data(self) -> bool:
-        """读取私人数据，重试1次"""
+        """
+        读取私人数据，重试1次
+        【修改】支持单边持仓：哪个交易所有数据就处理哪个，互不影响
+        """
         max_attempts = 2
         
         for attempt in range(max_attempts):
@@ -156,56 +162,75 @@ class ClosePositionWorker:
                 okx_data = user_data.get("okx", {})
                 binance_data = user_data.get("binance", {})
                 
-                # 提取开仓方向
-                self.okx_position_side = okx_data.get("开仓方向", "")
-                self.binance_position_side = binance_data.get("开仓方向", "")
+                has_valid_data = False  # 标记是否至少有一个有效持仓
                 
-                # 提取币安持仓币数
-                self.binance_quantity = float(binance_data.get("持仓币数", 0))
+                # ========== 处理欧易数据 ==========
+                if self.okx_symbol:
+                    self.okx_position_side = okx_data.get("开仓方向", "")
+                    
+                    if self.okx_position_side:
+                        has_valid_data = True
+                        logger.info(f"✅【半自动清仓工人】欧易数据有效: 方向={self.okx_position_side}")
+                    else:
+                        # 欧易无有效持仓数据，清空欧易缓存，跳过后续处理
+                        self.okx_cache = None
+                        logger.warning("⚠️【半自动清仓工人】欧易无有效持仓数据，跳过")
                 
-                # 校验
-                if not self.okx_position_side:
-                    logger.warning("⚠️【半自动清仓工人】欧易开仓方向为空")
+                # ========== 处理币安数据 ==========
+                if self.binance_symbol:
+                    self.binance_position_side = binance_data.get("开仓方向", "")
+                    self.binance_quantity = float(binance_data.get("持仓币数", 0))
+                    
+                    if self.binance_position_side and self.binance_quantity > 0:
+                        has_valid_data = True
+                        logger.info(f"✅【半自动清仓工人】币安数据有效: 方向={self.binance_position_side}, 持仓币数={self.binance_quantity}")
+                    else:
+                        # 币安无有效持仓数据，清空币安缓存，跳过后续处理
+                        self.binance_cache = None
+                        logger.warning("⚠️【半自动清仓工人】币安无有效持仓数据，跳过")
+                
+                # 【修改】只要有一个交易所有效就继续，不再强制要求两个都有
+                if has_valid_data:
+                    return True
+                else:
+                    logger.warning(f"⚠️【半自动清仓工人】没有找到任何有效持仓数据 (尝试 {attempt+1}/{max_attempts})")
                     continue
-                
-                if not self.binance_position_side:
-                    logger.warning("⚠️【半自动清仓工人】币安开仓方向为空")
-                    continue
-                
-                if self.binance_quantity <= 0:
-                    logger.warning(f"⚠️【半自动清仓工人】币安持仓币数无效: {self.binance_quantity}")
-                    continue
-                
-                logger.info(f"✅【半自动清仓工人】私人数据: 欧易方向={self.okx_position_side}, 币安方向={self.binance_position_side}, 币安持仓币数={self.binance_quantity}")
-                return True
                 
             except Exception as e:
                 logger.error(f"❌【半自动清仓工人】读取私人数据失败 (尝试 {attempt+1}/{max_attempts}): {e}")
                 if attempt < max_attempts - 1:
                     await asyncio.sleep(1)
         
+        logger.error("❌【半自动清仓工人】所有交易所均无有效持仓数据")
         return False
     
     def _fill_direction(self):
-        """填充方向字段"""
-        # 欧易：小写
-        self.okx_cache["params"]["posSide"] = self.okx_position_side.lower()
+        """
+        填充方向字段
+        【修改】只填充有缓存的交易所
+        """
+        # ========== 填充欧易参数 ==========
+        if self.okx_cache:
+            # 欧易：小写
+            self.okx_cache["params"]["posSide"] = self.okx_position_side.lower()
+            logger.info(f"📝【半自动清仓工人】欧易方向已填充: posSide={self.okx_cache['params']['posSide']}")
         
-        # 币安：填充 side、positionSide、quantity
-        # positionSide：开仓方向直接使用（LONG/SHORT）
-        self.binance_cache["params"]["positionSide"] = self.binance_position_side
-        
-        # side：平仓方向（与开仓方向相反）
-        if self.binance_position_side == "LONG":
-            self.binance_cache["params"]["side"] = "SELL"
-        else:
-            self.binance_cache["params"]["side"] = "BUY"
-        
-        # quantity：持仓币数，格式化
-        qty_formatted = f"{self.binance_quantity:.8f}".rstrip('0').rstrip('.')
-        self.binance_cache["params"]["quantity"] = qty_formatted
-        
-        logger.info(f"📝【半自动清仓工人】方向已填充: 欧易={self.okx_cache['params']['posSide']}, 币安={self.binance_cache['params']}")
+        # ========== 填充币安参数 ==========
+        if self.binance_cache:
+            # positionSide：开仓方向直接使用（LONG/SHORT）
+            self.binance_cache["params"]["positionSide"] = self.binance_position_side
+            
+            # side：平仓方向（与开仓方向相反）
+            if self.binance_position_side == "LONG":
+                self.binance_cache["params"]["side"] = "SELL"
+            else:
+                self.binance_cache["params"]["side"] = "BUY"
+            
+            # quantity：持仓币数，格式化
+            qty_formatted = f"{self.binance_quantity:.8f}".rstrip('0').rstrip('.')
+            self.binance_cache["params"]["quantity"] = qty_formatted
+            
+            logger.info(f"📝【半自动清仓工人】币安方向已填充: side={self.binance_cache['params']['side']}, positionSide={self.binance_cache['params']['positionSide']}, quantity={qty_formatted}")
     
     def _send_to_trader(self):
         """推送给下单工人"""
@@ -218,6 +243,8 @@ class ClosePositionWorker:
         if orders and self.brain.trader:
             self.brain.trader.send_orders(orders)
             logger.info(f"📤【半自动清仓工人】已推送 {len(orders)} 个订单给下单工人")
+        elif not orders:
+            logger.warning("⚠️【半自动清仓工人】没有需要推送的订单")
     
     def _cleanup(self):
         """清空所有缓存"""
