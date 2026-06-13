@@ -380,32 +380,31 @@ class Trader:
         
         【重要】模拟环境（testnet）和实盘环境（production）的接口路径不同：
         - 模拟环境：/sapi/v1/algo/futures/openOrders 和 /sapi/v1/algo/futures/order
-        - 实盘环境：/fapi/v1/algoOrders/open 和 /fapi/v1/algoOrders
+        - 实盘环境：/fapi/v1/openAlgoOrders 和 /fapi/v1/algoOpenOrders
         
-        模拟环境下该接口不稳定，直接跳过清理逻辑。
+        参考文档：https://developers.binance.info/docs/derivatives/usds-margined-futures/trade/rest-api/Cancel-All-Algo-Open-Orders
         """
         # 模拟环境下跳过（测试网不支持此接口稳定工作）
         if self.use_sandbox:
             logger.debug("🧹【下单工人】币安模拟模式，跳过清理")
             return
         
-        # ========== 实盘环境使用新接口 ==========
+        # ========== 实盘环境使用正确接口 ==========
         try:
             api_key = creds.get("api_key")
             api_secret = creds.get("api_secret")
             
-            # 1. 查询所有未触发的条件单（实盘新接口）
-            # 接口文档：GET /fapi/v1/algoOrders/open
+            # 1. 查询所有未触发的条件单
+            # 接口文档：GET /fapi/v1/openAlgoOrders
             open_orders = await self._binance_http_request(
                 api_key, api_secret,
                 "GET",
-                "/fapi/v1/algoOrders/open",
+                "/fapi/v1/openAlgoOrders",
                 {}
             )
             
-            # 新接口返回格式：成功时直接返回列表，失败时返回 {"code": 错误码, "msg": "..."}
+            # 接口返回格式：成功时直接返回列表
             if not isinstance(open_orders, list):
-                # 可能是错误响应
                 if isinstance(open_orders, dict) and open_orders.get("code"):
                     logger.warning(f"⚠️【下单工人】币安查询条件单失败: code={open_orders.get('code')}, msg={open_orders.get('msg')}")
                 else:
@@ -416,34 +415,37 @@ class Trader:
                 logger.info("🧹【下单工人】币安无残留条件单")
                 return
             
-            # 2. 提取需要撤销的 algoId（按 symbol 去重，每个合约只保留一个）
-            seen_symbols = set()
-            algo_ids_to_cancel = []
-            
+            # 2. 提取需要清理的 symbol（按 symbol 去重）
+            symbols_to_clean = set()
             for order in open_orders:
                 symbol = order.get('symbol')
-                algo_id = order.get('algoId')
-                if symbol and algo_id and symbol not in seen_symbols:
-                    seen_symbols.add(symbol)
-                    algo_ids_to_cancel.append(algo_id)
+                if symbol:
+                    symbols_to_clean.add(symbol)
             
-            if not algo_ids_to_cancel:
+            if not symbols_to_clean:
                 return
             
-            # 3. 逐个撤销条件单（实盘新接口）
-            # 接口文档：DELETE /fapi/v1/algoOrders
-            for algo_id in algo_ids_to_cancel:
+            # 3. 按 symbol 逐个撤销全部条件单
+            # 接口文档：DELETE /fapi/v1/algoOpenOrders
+            for symbol in symbols_to_clean:
                 result = await self._binance_http_request(
                     api_key, api_secret,
                     "DELETE",
-                    "/fapi/v1/algoOrders",
-                    {"algoId": algo_id}
+                    "/fapi/v1/algoOpenOrders",
+                    {"symbol": symbol}
                 )
                 # 撤销成功返回 {"code":200, "msg":"..."}
-                if isinstance(result, dict) and result.get("code") == 200:
-                    logger.info(f"🧹【下单工人】币安已清理 algoId: {algo_id}")
+                # 兼容两种返回格式（code 可能是数字或字符串）
+                is_success = False
+                if isinstance(result, dict):
+                    code = result.get("code")
+                    if code == 200 or code == "200":
+                        is_success = True
+                
+                if is_success:
+                    logger.info(f"🧹【下单工人】币安已清理 {symbol} 的全部条件单")
                 else:
-                    logger.warning(f"⚠️【下单工人】币安撤销失败 algoId: {algo_id}, 响应: {result}")
+                    logger.warning(f"⚠️【下单工人】币安撤销全部条件单失败 {symbol}: {result}")
             
         except Exception as e:
             logger.warning(f"⚠️【下单工人】币安清理残留单失败（可忽略）: {e}")
