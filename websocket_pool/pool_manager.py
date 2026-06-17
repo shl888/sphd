@@ -23,6 +23,24 @@ from .static_symbols import STATIC_SYMBOLS  # 导入静态合约
 
 logger = logging.getLogger(__name__)
 
+# ============ 🚫 合约黑名单 ============
+# 原因：两个交易所合约名相同，但实际标的完全不一样
+# 币安格式: BBUSDT
+# 欧易格式: BB-USDT-SWAP
+# 发现新的同名不同标合约，直接加在这里，两边都要加
+SYMBOL_BLACKLIST = {
+    "binance": [
+        "BBUSDT",
+        "QNTUSDT",
+        # 发现新的就加在这里
+    ],
+    "okx": [
+        "BB-USDT-SWAP",
+        "QNT-USDT-SWAP",
+        # 发现新的就加在这里
+    ]
+}
+
 # ============ 【固定数据回调函数】============
 async def default_data_callback(data):
     """默认数据回调函数 - 带阈值清零版"""
@@ -463,6 +481,15 @@ class WebSocketPoolManager:
         for coin in common_coins:
             binance_contract = binance_coin_to_contract[coin]
             okx_contract = okx_coin_to_contract[coin]
+            
+            # ===== 🚫 黑名单过滤 =====
+            # 检查币安合约是否在黑名单中
+            if binance_contract in SYMBOL_BLACKLIST.get("binance", []):
+                continue
+            # 检查欧易合约是否在黑名单中
+            if okx_contract in SYMBOL_BLACKLIST.get("okx", []):
+                continue
+            # ===== 黑名单过滤结束 =====
             
             binance_extracted = self._extract_coin_precise(binance_contract, "binance")
             okx_extracted = self._extract_coin_precise(okx_contract, "okx")
