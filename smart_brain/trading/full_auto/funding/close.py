@@ -680,6 +680,7 @@ class FundingClose:
         return False
     
     # -------------------- 条件4：费率差缩小 --------------------
+    # 费率差正常是0.3，如今测试改为0.1
     
     def _check_rate_diff_small(self, market_data: Dict) -> bool:
         """检查费率差是否 ≤ 0.3"""
@@ -698,7 +699,7 @@ class FundingClose:
         
         try:
             rate_diff = float(rate_diff)
-            if rate_diff <= 0.1:
+            if rate_diff <= 0.3:
                 if self.last_rate_diff_triggered:
                     return False
                 self.last_rate_diff_triggered = True

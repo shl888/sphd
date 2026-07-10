@@ -55,7 +55,7 @@ class FundingOpen:
                 "order_type": "market",
                 "symbol": None,
                 "margin": None,
-                "leverage": 1,
+                "leverage": 20,
                 "direction": None
             }
         }
@@ -332,13 +332,13 @@ class FundingOpen:
             okx_asset = float(okx_data.get('账户资产额', 0))
             binance_asset = float(binance_data.get('账户资产额', 0))
             
-            if okx_asset < 5:
-                logger.warning(f"⚠️【资金费开仓工人】欧易资产不足5: {okx_asset:.2f}")
+            if okx_asset < 50:
+                logger.warning(f"⚠️【资金费开仓工人】欧易资产不足50: {okx_asset:.2f}")
                 return False
-            if binance_asset < 5:
-                logger.warning(f"⚠️【资金费开仓工人】币安资产不足5: {binance_asset:.2f}")
+            if binance_asset < 50:
+                logger.warning(f"⚠️【资金费开仓工人】币安资产不足50: {binance_asset:.2f}")
                 return False
-            # 资产正常是50，如今测试改为5
+            # 资产正常是50，如今测试改为20
             
             logger.info(f"✅【资金费开仓工人】资产检查通过: 欧易={okx_asset:.2f}, 币安={binance_asset:.2f}")
             return True
@@ -428,8 +428,8 @@ class FundingOpen:
                 # 这里的0.3只是测试用，实战时改回0.8
                 
                 # 条件1：费率差检查
-                if rate_diff < 0.3:
-                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 费率差不足: {rate_diff} < 0.3")
+                if rate_diff < 0.8:
+                    logger.debug(f"⏭️【资金费开仓工人】{symbol} 费率差不足: {rate_diff} < 0.8")
                     continue
                 
                 # 条件2：价差检查（新增）
@@ -514,7 +514,7 @@ class FundingOpen:
             binance_asset = float(binance_data.get('账户资产额', 0))
             
             smaller = min(okx_asset, binance_asset)
-            margin = smaller * 0.05
+            margin = smaller * 0.1
             # 系数正常是0.1，如今测试改为0.05
             
             logger.info(f"💰【资金费开仓工人】保证金计算: 较小资产={smaller:.2f}, margin={margin:.2f}")
