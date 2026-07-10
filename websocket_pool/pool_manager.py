@@ -32,11 +32,13 @@ SYMBOL_BLACKLIST = {
     "binance": [
         "BBUSDT",
         "QNTUSDT",
+        "ONUSDT",
         # 发现新的就加在这里
     ],
     "okx": [
         "BB-USDT-SWAP",
         "QNT-USDT-SWAP",
+        "ON-USDT-SWAP",
         # 发现新的就加在这里
     ]
 }
